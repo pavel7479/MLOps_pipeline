@@ -1,0 +1,19 @@
+market_data:
+  provider: binance
+  symbol: BTCUSDT
+  timeframe: 1h
+  start_date: "2024-01-01"
+  end_date: null
+
+storage:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  format: parquet
+
+http:
+  timeout_seconds: 15
+  max_retries: 3
+  retry_delay_seconds: 2
+
+logging:
+  level: INFO
