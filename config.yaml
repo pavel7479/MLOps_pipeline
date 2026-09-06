@@ -79,3 +79,35 @@ evaluation:
   primary_metric: macro_f1
   models_dir: artifacts/models
   results_dir: artifacts/model_evaluation
+
+time_series_validation:
+  n_splits: 5
+
+hyperparameter_search:
+  n_iter: 20
+  random_state: 42
+  scoring: macro_f1
+  models_dir: artifacts/tuned_models
+  results_dir: artifacts/hyperparameter_search
+
+search_spaces:
+  catboost:
+    iterations: [200, 300, 500, 700]
+    depth: [4, 5, 6, 7, 8]
+    learning_rate: [0.01, 0.03, 0.05, 0.1]
+    l2_leaf_reg: [1, 3, 5, 7, 10]
+  xgboost:
+    n_estimators: [200, 300, 500, 700]
+    max_depth: [3, 4, 5, 6, 8]
+    learning_rate: [0.01, 0.03, 0.05, 0.1]
+    subsample: [0.7, 0.8, 0.9, 1.0]
+    colsample_bytree: [0.7, 0.8, 0.9, 1.0]
+    min_child_weight: [1, 3, 5, 7]
+  lightgbm:
+    n_estimators: [200, 300, 500, 700]
+    max_depth: [-1, 4, 6, 8, 10]
+    learning_rate: [0.01, 0.03, 0.05, 0.1]
+    num_leaves: [15, 31, 63, 127]
+    subsample: [0.7, 0.8, 0.9, 1.0]
+    colsample_bytree: [0.7, 0.8, 0.9, 1.0]
+    min_child_samples: [10, 20, 30, 50]

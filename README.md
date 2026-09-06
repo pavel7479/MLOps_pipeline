@@ -111,3 +111,17 @@ Pipeline обучает `DummyClassifier`, Logistic Regression, CatBoost, XGBoos
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -v
 ```
+
+## Блок 4 — Time-Series CV и подбор гиперпараметров
+
+CatBoost, XGBoost и LightGBM настраиваются командой:
+
+~~~powershell
+.\.venv\Scripts\python.exe scripts\tune_models.py
+~~~
+
+RandomizedSearchCV использует только Train и пять expanding-window фолдов без перемешивания. Между обучающей и проверочной частями каждого фолда установлен gap, вычисляемый из target.horizon_hours и market_data.timeframe; для горизонта 3 часа и свечей 1h gap равен трём строкам. Метрика поиска — Macro F1 (sklearn f1_macro), число случайных комбинаций — 20, random_state — 42.
+
+Validation загружается только после завершения поиска всех моделей. Лучшие параметры каждой модели затем обучаются на полном Train и сравниваются с результатами этапа 3 на Validation. Test остаётся зарезервированным: pipeline его не читает, не оценивает и не использует для выбора параметров или победителя.
+
+Результаты поиска сохраняются в **artifacts/hyperparameter_search/**, tuned-модели — в **artifacts/tuned_models/**; артефакты этапа 3 не перезаписываются. Подробное описание фолдов, prediction timestamp и файлов: [docs/hyperparameter_tuning.md](docs/hyperparameter_tuning.md).

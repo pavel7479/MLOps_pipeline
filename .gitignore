@@ -17,3 +17,7 @@ artifacts/models/*
 artifacts/model_evaluation/*
 !artifacts/models/.gitkeep
 !artifacts/model_evaluation/.gitkeep
+artifacts/tuned_models/*
+artifacts/hyperparameter_search/*
+!artifacts/tuned_models/.gitkeep
+!artifacts/hyperparameter_search/.gitkeep

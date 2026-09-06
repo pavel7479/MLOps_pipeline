@@ -11,6 +11,32 @@ class TrainingDataValidator:
 
     FORBIDDEN_FEATURES = {"timestamp", "open", "high", "low", "close", "volume", "future_return", "target"}
 
+    def validate_frame(self, frame: pd.DataFrame, feature_names: list[str], name: str) -> None:
+        """Validate one chronological split independently."""
+        if frame.empty:
+            raise ValueError(f"{name} dataset must be non-empty")
+        if not feature_names or len(feature_names) != len(set(feature_names)):
+            raise ValueError("Feature manifest must be non-empty and unique")
+        forbidden = self.FORBIDDEN_FEATURES.intersection(feature_names)
+        forbidden.update(column for column in feature_names if column.startswith("future_"))
+        if forbidden:
+            raise ValueError(f"Forbidden fields in feature manifest: {sorted(forbidden)}")
+        missing = [column for column in [*feature_names, "target", "timestamp"] if column not in frame]
+        if missing:
+            raise ValueError(f"{name} is missing required columns: {missing}")
+        features = frame[feature_names]
+        if not all(pd.api.types.is_numeric_dtype(features[column]) for column in feature_names):
+            raise ValueError(f"{name} features must all be numeric")
+        if features.isna().any().any() or not np.isfinite(features.to_numpy(dtype=float)).all():
+            raise ValueError(f"{name} features must be finite and non-null")
+        labels = set(frame["target"].dropna().unique())
+        if frame["target"].isna().any() or not labels.issubset(TARGET_CLASSES):
+            raise ValueError(f"{name} contains invalid target labels")
+        if frame["timestamp"].isna().any() or not frame["timestamp"].is_unique:
+            raise ValueError(f"{name} timestamps must be non-null and unique")
+        if not frame["timestamp"].is_monotonic_increasing:
+            raise ValueError(f"{name} timestamps must be chronologically sorted")
+
     def validate(self, train: pd.DataFrame, validation: pd.DataFrame, feature_names: list[str]) -> None:
         """Raise a clear error before any estimator sees invalid data."""
         if train.empty or validation.empty:

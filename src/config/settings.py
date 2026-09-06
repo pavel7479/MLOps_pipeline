@@ -125,6 +125,58 @@ class EvaluationSettings:
     primary_metric: str = "macro_f1"
     models_dir: Path = Path("artifacts/models")
     results_dir: Path = Path("artifacts/model_evaluation")
+
+
+@dataclass(frozen=True)
+class TimeSeriesValidationSettings:
+    n_splits: int = 5
+
+
+@dataclass(frozen=True)
+class HyperparameterSearchSettings:
+    n_iter: int = 20
+    random_state: int = 42
+    scoring: str = "macro_f1"
+    models_dir: Path = Path("artifacts/tuned_models")
+    results_dir: Path = Path("artifacts/hyperparameter_search")
+
+
+@dataclass(frozen=True)
+class CatBoostSearchSpace:
+    iterations: tuple[int, ...] = (200, 300, 500, 700)
+    depth: tuple[int, ...] = (4, 5, 6, 7, 8)
+    learning_rate: tuple[float, ...] = (0.01, 0.03, 0.05, 0.1)
+    l2_leaf_reg: tuple[int, ...] = (1, 3, 5, 7, 10)
+
+
+@dataclass(frozen=True)
+class XGBoostSearchSpace:
+    n_estimators: tuple[int, ...] = (200, 300, 500, 700)
+    max_depth: tuple[int, ...] = (3, 4, 5, 6, 8)
+    learning_rate: tuple[float, ...] = (0.01, 0.03, 0.05, 0.1)
+    subsample: tuple[float, ...] = (0.7, 0.8, 0.9, 1.0)
+    colsample_bytree: tuple[float, ...] = (0.7, 0.8, 0.9, 1.0)
+    min_child_weight: tuple[int, ...] = (1, 3, 5, 7)
+
+
+@dataclass(frozen=True)
+class LightGBMSearchSpace:
+    n_estimators: tuple[int, ...] = (200, 300, 500, 700)
+    max_depth: tuple[int, ...] = (-1, 4, 6, 8, 10)
+    learning_rate: tuple[float, ...] = (0.01, 0.03, 0.05, 0.1)
+    num_leaves: tuple[int, ...] = (15, 31, 63, 127)
+    subsample: tuple[float, ...] = (0.7, 0.8, 0.9, 1.0)
+    colsample_bytree: tuple[float, ...] = (0.7, 0.8, 0.9, 1.0)
+    min_child_samples: tuple[int, ...] = (10, 20, 30, 50)
+
+
+@dataclass(frozen=True)
+class SearchSpacesSettings:
+    catboost: CatBoostSearchSpace = CatBoostSearchSpace()
+    xgboost: XGBoostSearchSpace = XGBoostSearchSpace()
+    lightgbm: LightGBMSearchSpace = LightGBMSearchSpace()
+
+
 @dataclass(frozen=True)
 class AppSettings:
     market_data: MarketDataSettings
@@ -137,6 +189,9 @@ class AppSettings:
     ml_dataset: MLDatasetSettings = MLDatasetSettings()
     models: ModelsSettings = ModelsSettings()
     evaluation: EvaluationSettings = EvaluationSettings()
+    time_series_validation: TimeSeriesValidationSettings = TimeSeriesValidationSettings()
+    hyperparameter_search: HyperparameterSearchSettings = HyperparameterSearchSettings()
+    search_spaces: SearchSpacesSettings = SearchSpacesSettings()
 
 
 def _required(mapping: dict[str, Any], key: str, section: str) -> Any:
@@ -164,6 +219,17 @@ def _positive_int_tuple(value: Any, name: str) -> tuple[int, ...]:
     if not result or any(item <= 0 for item in result):
         raise ConfigurationError(f"{name} must be a non-empty list of positive integers")
     return result
+
+
+def _number_tuple(value: Any, name: str, cast: type = float) -> tuple[Any, ...]:
+    try:
+        result = tuple(cast(item) for item in value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(f"{name} must be a non-empty numeric list") from exc
+    if not result:
+        raise ConfigurationError(f"{name} must be a non-empty numeric list")
+    return result
+
 
 def load_settings(path: str | Path = "config.yaml") -> AppSettings:
     """Load, validate, and resolve application settings."""
@@ -273,6 +339,57 @@ def load_settings(path: str | Path = "config.yaml") -> AppSettings:
     )
     if evaluation.primary_metric != "macro_f1":
         raise ConfigurationError("Block 3 supports macro_f1 as the primary metric")
+    time_series_raw = raw.get("time_series_validation", {})
+    time_series_validation = TimeSeriesValidationSettings(
+        n_splits=int(time_series_raw.get("n_splits", 5))
+    )
+    search_raw = raw.get("hyperparameter_search", {})
+    hyperparameter_search = HyperparameterSearchSettings(
+        n_iter=int(search_raw.get("n_iter", 20)),
+        random_state=int(search_raw.get("random_state", 42)),
+        scoring=str(search_raw.get("scoring", "macro_f1")),
+        models_dir=(base / search_raw.get("models_dir", "artifacts/tuned_models")).resolve(),
+        results_dir=(base / search_raw.get("results_dir", "artifacts/hyperparameter_search")).resolve(),
+    )
+    if time_series_validation.n_splits < 2:
+        raise ConfigurationError("time_series_validation.n_splits must be at least 2")
+    if hyperparameter_search.n_iter <= 0:
+        raise ConfigurationError("hyperparameter_search.n_iter must be positive")
+    if hyperparameter_search.scoring != "macro_f1":
+        raise ConfigurationError("Block 4 supports macro_f1 as the search metric")
+    spaces_raw = raw.get("search_spaces", {})
+    cb_defaults = CatBoostSearchSpace()
+    xgb_defaults = XGBoostSearchSpace()
+    lgb_defaults = LightGBMSearchSpace()
+    cb_raw = spaces_raw.get("catboost", {})
+    xgb_raw = spaces_raw.get("xgboost", {})
+    lgb_raw = spaces_raw.get("lightgbm", {})
+    search_spaces = SearchSpacesSettings(
+        catboost=CatBoostSearchSpace(
+            iterations=_number_tuple(cb_raw.get("iterations", cb_defaults.iterations), "search_spaces.catboost.iterations", int),
+            depth=_number_tuple(cb_raw.get("depth", cb_defaults.depth), "search_spaces.catboost.depth", int),
+            learning_rate=_number_tuple(cb_raw.get("learning_rate", cb_defaults.learning_rate), "search_spaces.catboost.learning_rate"),
+            l2_leaf_reg=_number_tuple(cb_raw.get("l2_leaf_reg", cb_defaults.l2_leaf_reg), "search_spaces.catboost.l2_leaf_reg", int),
+        ),
+        xgboost=XGBoostSearchSpace(
+            n_estimators=_number_tuple(xgb_raw.get("n_estimators", xgb_defaults.n_estimators), "search_spaces.xgboost.n_estimators", int),
+            max_depth=_number_tuple(xgb_raw.get("max_depth", xgb_defaults.max_depth), "search_spaces.xgboost.max_depth", int),
+            learning_rate=_number_tuple(xgb_raw.get("learning_rate", xgb_defaults.learning_rate), "search_spaces.xgboost.learning_rate"),
+            subsample=_number_tuple(xgb_raw.get("subsample", xgb_defaults.subsample), "search_spaces.xgboost.subsample"),
+            colsample_bytree=_number_tuple(xgb_raw.get("colsample_bytree", xgb_defaults.colsample_bytree), "search_spaces.xgboost.colsample_bytree"),
+            min_child_weight=_number_tuple(xgb_raw.get("min_child_weight", xgb_defaults.min_child_weight), "search_spaces.xgboost.min_child_weight", int),
+        ),
+        lightgbm=LightGBMSearchSpace(
+            n_estimators=_number_tuple(lgb_raw.get("n_estimators", lgb_defaults.n_estimators), "search_spaces.lightgbm.n_estimators", int),
+            max_depth=_number_tuple(lgb_raw.get("max_depth", lgb_defaults.max_depth), "search_spaces.lightgbm.max_depth", int),
+            learning_rate=_number_tuple(lgb_raw.get("learning_rate", lgb_defaults.learning_rate), "search_spaces.lightgbm.learning_rate"),
+            num_leaves=_number_tuple(lgb_raw.get("num_leaves", lgb_defaults.num_leaves), "search_spaces.lightgbm.num_leaves", int),
+            subsample=_number_tuple(lgb_raw.get("subsample", lgb_defaults.subsample), "search_spaces.lightgbm.subsample"),
+            colsample_bytree=_number_tuple(lgb_raw.get("colsample_bytree", lgb_defaults.colsample_bytree), "search_spaces.lightgbm.colsample_bytree"),
+            min_child_samples=_number_tuple(lgb_raw.get("min_child_samples", lgb_defaults.min_child_samples), "search_spaces.lightgbm.min_child_samples", int),
+        ),
+    )
+
     return AppSettings(
         market_data=MarketDataSettings(
             provider=str(_required(market, "provider", "market_data")).lower(),
@@ -298,4 +415,7 @@ def load_settings(path: str | Path = "config.yaml") -> AppSettings:
         ml_dataset=MLDatasetSettings(output_dir),
         models=models,
         evaluation=evaluation,
+        time_series_validation=time_series_validation,
+        hyperparameter_search=hyperparameter_search,
+        search_spaces=search_spaces,
     )
