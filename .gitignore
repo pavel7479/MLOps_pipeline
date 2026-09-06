@@ -21,3 +21,5 @@ artifacts/tuned_models/*
 artifacts/hyperparameter_search/*
 !artifacts/tuned_models/.gitkeep
 !artifacts/hyperparameter_search/.gitkeep
+artifacts/backtesting/*
+!artifacts/backtesting/.gitkeep

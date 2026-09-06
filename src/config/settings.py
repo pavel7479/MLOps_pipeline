@@ -176,6 +176,27 @@ class SearchSpacesSettings:
     xgboost: XGBoostSearchSpace = XGBoostSearchSpace()
     lightgbm: LightGBMSearchSpace = LightGBMSearchSpace()
 
+@dataclass(frozen=True)
+class BacktestStrategySettings:
+    slug: str
+    display_name: str
+    model_path: Path
+    model_version: str = "unspecified"
+
+
+@dataclass(frozen=True)
+class BacktestingSettings:
+    initial_cash: float = 10000.0
+    commission_rate: float = 0.001
+    slippage_rate: float = 0.0
+    allow_short: bool = False
+    leverage: float = 1.0
+    force_close_at_end: bool = True
+    output_dir: Path = Path("artifacts/backtesting")
+    strategies: tuple[BacktestStrategySettings, ...] = ()
+
+
+
 
 @dataclass(frozen=True)
 class AppSettings:
@@ -192,6 +213,7 @@ class AppSettings:
     time_series_validation: TimeSeriesValidationSettings = TimeSeriesValidationSettings()
     hyperparameter_search: HyperparameterSearchSettings = HyperparameterSearchSettings()
     search_spaces: SearchSpacesSettings = SearchSpacesSettings()
+    backtesting: BacktestingSettings = BacktestingSettings()
 
 
 def _required(mapping: dict[str, Any], key: str, section: str) -> Any:
@@ -390,6 +412,54 @@ def load_settings(path: str | Path = "config.yaml") -> AppSettings:
         ),
     )
 
+    backtesting_raw = raw.get("backtesting", {})
+    strategies_raw = backtesting_raw.get("strategies", {
+        "lightgbm_block3": {
+            "display_name": "LightGBM Block 3",
+            "model_path": "artifacts/models/lightgbm.joblib",
+        },
+        "lightgbm_tuned": {
+            "display_name": "Tuned LightGBM",
+            "model_path": "artifacts/tuned_models/lightgbm_tuned.joblib",
+        },
+    })
+    if not isinstance(strategies_raw, dict) or not strategies_raw:
+        raise ConfigurationError("backtesting.strategies must be a non-empty mapping")
+    strategies = tuple(
+        BacktestStrategySettings(
+            slug=str(slug),
+            display_name=str(_required(strategy, "display_name", f"backtesting.strategies.{slug}")),
+            model_path=(base / _required(strategy, "model_path", f"backtesting.strategies.{slug}")).resolve(),
+            model_version=str(strategy.get("model_version", "unspecified")),
+        )
+        for slug, strategy in strategies_raw.items()
+    )
+    if len({strategy.slug for strategy in strategies}) != len(strategies):
+        raise ConfigurationError("Backtesting strategy slugs must be unique")
+    if any(not strategy.slug.replace("_", "").isalnum() for strategy in strategies):
+        raise ConfigurationError("Backtesting strategy slugs must contain only letters, digits, and underscores")
+    backtesting = BacktestingSettings(
+        initial_cash=float(backtesting_raw.get("initial_cash", 10000.0)),
+        commission_rate=float(backtesting_raw.get("commission_rate", 0.001)),
+        slippage_rate=float(backtesting_raw.get("slippage_rate", 0.0)),
+        allow_short=bool(backtesting_raw.get("allow_short", False)),
+        leverage=float(backtesting_raw.get("leverage", 1.0)),
+        force_close_at_end=bool(backtesting_raw.get("force_close_at_end", True)),
+        output_dir=(base / backtesting_raw.get("output_dir", "artifacts/backtesting")).resolve(),
+        strategies=strategies,
+    )
+    if backtesting.initial_cash <= 0:
+        raise ConfigurationError("backtesting.initial_cash must be positive")
+    if not 0 <= backtesting.commission_rate < 1:
+        raise ConfigurationError("backtesting.commission_rate must be in [0, 1)")
+    if not 0 <= backtesting.slippage_rate < 1:
+        raise ConfigurationError("backtesting.slippage_rate must be in [0, 1)")
+    if backtesting.allow_short or backtesting.leverage != 1.0:
+        raise ConfigurationError("Block 5 requires allow_short=false and leverage=1.0")
+    if not backtesting.force_close_at_end:
+        raise ConfigurationError("Block 5 requires force_close_at_end=true")
+
+
     return AppSettings(
         market_data=MarketDataSettings(
             provider=str(_required(market, "provider", "market_data")).lower(),
@@ -418,4 +488,5 @@ def load_settings(path: str | Path = "config.yaml") -> AppSettings:
         time_series_validation=time_series_validation,
         hyperparameter_search=hyperparameter_search,
         search_spaces=search_spaces,
+        backtesting=backtesting,
     )

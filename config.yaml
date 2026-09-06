@@ -111,3 +111,21 @@ search_spaces:
     subsample: [0.7, 0.8, 0.9, 1.0]
     colsample_bytree: [0.7, 0.8, 0.9, 1.0]
     min_child_samples: [10, 20, 30, 50]
+
+backtesting:
+  initial_cash: 10000.0
+  commission_rate: 0.001
+  slippage_rate: 0.0
+  allow_short: false
+  leverage: 1.0
+  force_close_at_end: true
+  output_dir: artifacts/backtesting
+  strategies:
+    lightgbm_block3:
+      display_name: LightGBM Block 3
+      model_version: block_3
+      model_path: artifacts/models/lightgbm.joblib
+    lightgbm_tuned:
+      display_name: Tuned LightGBM
+      model_version: block_4_tuned
+      model_path: artifacts/tuned_models/lightgbm_tuned.joblib

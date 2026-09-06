@@ -125,3 +125,17 @@ RandomizedSearchCV использует только Train и пять expanding
 Validation загружается только после завершения поиска всех моделей. Лучшие параметры каждой модели затем обучаются на полном Train и сравниваются с результатами этапа 3 на Validation. Test остаётся зарезервированным: pipeline его не читает, не оценивает и не использует для выбора параметров или победителя.
 
 Результаты поиска сохраняются в **artifacts/hyperparameter_search/**, tuned-модели — в **artifacts/tuned_models/**; артефакты этапа 3 не перезаписываются. Подробное описание фолдов, prediction timestamp и файлов: [docs/hyperparameter_tuning.md](docs/hyperparameter_tuning.md).
+
+## Блок 5 — Validation Backtesting
+
+Историческая симуляция запускается без переобучения моделей:
+
+~~~powershell
+.\.venv\Scripts\python.exe scripts\run_backtest.py
+~~~
+
+Pipeline загружает сохранённые LightGBM этапа 3 и tuned LightGBM этапа 4, заново получает predictions на Validation и сравнивает обе ML-стратегии с Buy & Hold. Сигнал после закрытия свечи t исполняется только по Open свечи t+1. Последний сигнал без следующей свечи игнорируется; открытый LONG в конце принудительно закрывается по последнему Close.
+
+Стратегия работает только в состояниях FLAT/LONG, без short и leverage, с all-in размером позиции. Комиссия и configurable slippage учитываются при исполнении. Сохраняются equity curves, trade logs, доходность, excess return, drawdown, hourly Sharpe, статистика сделок, exposure и fees.
+
+Test dataset не читается. Это виртуальная историческая проверка на Validation, а не реальная торговля и не доказательство будущей прибыльности. Подробности: [docs/backtesting.md](docs/backtesting.md).
