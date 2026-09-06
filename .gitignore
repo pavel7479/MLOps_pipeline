@@ -1,11 +1,15 @@
 .venv/
 __pycache__/
 .pytest_cache/
+.test_tmp/
 *.pyc
 .env
 .idea/
 .vscode/
 data/raw/*.parquet
 data/processed/*.parquet
+data/ml/*.parquet
+data/ml/*.json
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+!data/ml/.gitkeep

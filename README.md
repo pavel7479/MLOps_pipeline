@@ -45,3 +45,47 @@ pytest -v
 ```
 
 Unit-тесты используют fake provider и `httpx.MockTransport`, поэтому не обращаются к реальному Binance API.
+
+## Блок 2 — ML Dataset Preparation
+
+Команда подготовки датасета:
+
+```powershell
+python scripts\build_ml_dataset.py
+```
+
+Pipeline читает очищенный `data/processed/BTCUSDT_1h.parquet` и рассчитывает только причинные признаки: доходности, SMA, rolling volatility, volume features, характеристики свечи, RSI, MACD и ATR.
+
+### Семантика prediction timestamp
+
+Строка с timestamp `t` описывает свечу `t`. Все её признаки рассчитываются по OHLCV полностью закрытой свечи `t` и более ранних закрытых свечей. Прогноз разрешено выполнять только после закрытия свечи `t`; внутрисвечные, ещё изменяющиеся значения не используются.
+
+Для Binance `timestamp` является UTC-временем открытия свечи. Поэтому при timeframe `1h` строка `12:00` становится доступной для inference после закрытия этой свечи в `13:00`. Timestamp идентифицирует свечу, а не физический момент, когда прогноз уже можно запросить.
+
+Модель прогнозирует изменение Close относительно `close[t]` — цены закрытия текущей свечи — до Close на горизонте `target.horizon_hours`:
+
+```text
+future_return[t] = close[t + horizon] / close[t] - 1
+```
+
+При `target.horizon_hours: 3` базовой ценой является закрытие свечи `t`, а сравниваемой — закрытие свечи через три часа. По умолчанию будущая доходность от `+0.3%` соответствует `BUY`, до `-0.3%` — `SELL`, промежуточная — `HOLD`. `future_return` сохраняется для анализа, но не входит в явный список features.
+
+Подробный контракт колонок и времени: [docs/ml_dataset.md](docs/ml_dataset.md).
+
+Данные делятся строго хронологически в пропорции 70/15/15. Случайное перемешивание запрещено, поскольку оно смешивает прошлое и будущее и создаёт data leakage. Последние `horizon_hours` строк Train и Validation исключаются (purge), поэтому target предыдущего split не использует цену следующего split.
+
+Создаваемые файлы:
+
+- `data/ml/BTCUSDT_1h_ml_dataset.parquet`;
+- `data/ml/BTCUSDT_1h_train.parquet`;
+- `data/ml/BTCUSDT_1h_validation.parquet`;
+- `data/ml/BTCUSDT_1h_test.parquet`;
+- `data/ml/feature_manifest.json`;
+- `data/ml/dataset_metadata.json`;
+- `data/ml/feature_statistics.json`.
+
+Полная проверка обоих блоков:
+
+```powershell
+python -m pytest -v
+```

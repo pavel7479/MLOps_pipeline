@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from .models import MARKET_COLUMNS, ValidationResult
+from .models import MARKET_COLUMNS, ValidationResult, timeframe_to_timedelta
 
 
 class MarketDataValidator:
@@ -29,7 +29,7 @@ class MarketDataValidator:
         if invalid_count:
             errors.append(f"Invalid rows: {invalid_count}")
         valid_unique = timestamps.dropna().drop_duplicates().sort_values()
-        expected = pd.to_timedelta(timeframe)
+        expected = timeframe_to_timedelta(timeframe)
         gaps = valid_unique.diff().dropna()
         missing_intervals = int(sum(max(0, int(delta / expected) - 1) for delta in gaps))
         if missing_intervals:
