@@ -30,6 +30,9 @@ def test_block_two_settings_are_loaded() -> None:
     assert settings.features.return_periods == (1, 3, 6, 12, 24)
     assert settings.target.horizon_hours == 3
     assert settings.ml_dataset.output_dir.name == "ml"
+    assert settings.models.logistic_regression.random_state == 42
+    assert settings.models.catboost.iterations == 300
+    assert settings.evaluation.primary_metric == "macro_f1"
 
 
 def test_split_ratios_must_sum_to_one(tmp_path: Path) -> None:

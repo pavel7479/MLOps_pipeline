@@ -89,3 +89,25 @@ future_return[t] = close[t + horizon] / close[t] - 1
 ```powershell
 python -m pytest -v
 ```
+
+## Блок 3 — Model Training and Validation Comparison
+
+Перед запуском должны быть построены ML-dataset и временные split Блока 2. Обучение запускается командой:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\train_models.py
+```
+
+Pipeline обучает `DummyClassifier`, Logistic Regression, CatBoost, XGBoost и LightGBM на одном и том же Train. Все модели используют только 28 колонок из `data/ml/feature_manifest.json` и оцениваются на одном Validation. Mapping классов един для всех моделей: `SELL=0`, `HOLD=1`, `BUY=2`.
+
+Для Logistic Regression используется sklearn Pipeline `StandardScaler -> LogisticRegression`; scaler обучается только на Train. CatBoost, XGBoost и LightGBM получают признаки без scaling.
+
+Главная метрика выбора — Validation Macro F1. Дополнительно сохраняются Accuracy, Macro Precision, Macro Recall, метрики BUY/HOLD/SELL и confusion matrix. Test dataset зарезервирован для будущей независимой проверки: Блок 3 не читает его, не считает на нём метрики и не использует его для выбора модели или параметров.
+
+Модели сохраняются в `artifacts/models/`, результаты — в `artifacts/model_evaluation/`. Встроенные feature importance бустингов служат только описанием использования признаков конкретной моделью; их шкалы между библиотеками не сопоставимы, и они не доказывают причинное влияние признака на рынок.
+
+Проверка:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -v
+```

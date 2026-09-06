@@ -50,3 +50,32 @@ split:
 
 ml_dataset:
   output_dir: data/ml
+
+models:
+  dummy:
+    strategy: most_frequent
+  logistic_regression:
+    max_iter: 2000
+    random_state: 42
+    class_weight: null
+  catboost:
+    iterations: 300
+    depth: 6
+    learning_rate: 0.05
+    random_seed: 42
+    verbose: false
+  xgboost:
+    n_estimators: 300
+    max_depth: 6
+    learning_rate: 0.05
+    random_state: 42
+  lightgbm:
+    n_estimators: 300
+    max_depth: 6
+    learning_rate: 0.05
+    random_state: 42
+
+evaluation:
+  primary_metric: macro_f1
+  models_dir: artifacts/models
+  results_dir: artifacts/model_evaluation

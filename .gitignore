@@ -13,3 +13,7 @@ data/ml/*.json
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/ml/.gitkeep
+artifacts/models/*
+artifacts/model_evaluation/*
+!artifacts/models/.gitkeep
+!artifacts/model_evaluation/.gitkeep

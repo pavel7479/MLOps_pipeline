@@ -75,6 +75,57 @@ class MLDatasetSettings:
 
 
 @dataclass(frozen=True)
+class DummySettings:
+    strategy: str = "most_frequent"
+
+
+@dataclass(frozen=True)
+class LogisticRegressionSettings:
+    max_iter: int = 2000
+    random_state: int = 42
+    class_weight: str | None = None
+
+
+@dataclass(frozen=True)
+class CatBoostSettings:
+    iterations: int = 300
+    depth: int = 6
+    learning_rate: float = 0.05
+    random_seed: int = 42
+    verbose: bool = False
+
+
+@dataclass(frozen=True)
+class XGBoostSettings:
+    n_estimators: int = 300
+    max_depth: int = 6
+    learning_rate: float = 0.05
+    random_state: int = 42
+
+
+@dataclass(frozen=True)
+class LightGBMSettings:
+    n_estimators: int = 300
+    max_depth: int = 6
+    learning_rate: float = 0.05
+    random_state: int = 42
+
+
+@dataclass(frozen=True)
+class ModelsSettings:
+    dummy: DummySettings = DummySettings()
+    logistic_regression: LogisticRegressionSettings = LogisticRegressionSettings()
+    catboost: CatBoostSettings = CatBoostSettings()
+    xgboost: XGBoostSettings = XGBoostSettings()
+    lightgbm: LightGBMSettings = LightGBMSettings()
+
+
+@dataclass(frozen=True)
+class EvaluationSettings:
+    primary_metric: str = "macro_f1"
+    models_dir: Path = Path("artifacts/models")
+    results_dir: Path = Path("artifacts/model_evaluation")
+@dataclass(frozen=True)
 class AppSettings:
     market_data: MarketDataSettings
     storage: StorageSettings
@@ -84,6 +135,8 @@ class AppSettings:
     target: TargetSettings = TargetSettings()
     split: SplitSettings = SplitSettings()
     ml_dataset: MLDatasetSettings = MLDatasetSettings()
+    models: ModelsSettings = ModelsSettings()
+    evaluation: EvaluationSettings = EvaluationSettings()
 
 
 def _required(mapping: dict[str, Any], key: str, section: str) -> Any:
@@ -171,6 +224,55 @@ def load_settings(path: str | Path = "config.yaml") -> AppSettings:
     if any(value <= 0 for value in (split.train_ratio, split.validation_ratio, split.test_ratio)) or abs(sum((split.train_ratio, split.validation_ratio, split.test_ratio)) - 1.0) > 1e-9:
         raise ConfigurationError("Split ratios must be positive and sum to 1.0")
     output_dir = (base / raw.get("ml_dataset", {}).get("output_dir", "data/ml")).resolve()
+    models_raw = raw.get("models", {})
+    model_defaults = ModelsSettings()
+    dummy_raw = models_raw.get("dummy", {})
+    logistic_raw = models_raw.get("logistic_regression", {})
+    catboost_raw = models_raw.get("catboost", {})
+    xgboost_raw = models_raw.get("xgboost", {})
+    lightgbm_raw = models_raw.get("lightgbm", {})
+    models = ModelsSettings(
+        dummy=DummySettings(strategy=str(dummy_raw.get("strategy", model_defaults.dummy.strategy))),
+        logistic_regression=LogisticRegressionSettings(
+            max_iter=int(logistic_raw.get("max_iter", model_defaults.logistic_regression.max_iter)),
+            random_state=int(logistic_raw.get("random_state", model_defaults.logistic_regression.random_state)),
+            class_weight=logistic_raw.get("class_weight", model_defaults.logistic_regression.class_weight),
+        ),
+        catboost=CatBoostSettings(
+            iterations=int(catboost_raw.get("iterations", model_defaults.catboost.iterations)),
+            depth=int(catboost_raw.get("depth", model_defaults.catboost.depth)),
+            learning_rate=float(catboost_raw.get("learning_rate", model_defaults.catboost.learning_rate)),
+            random_seed=int(catboost_raw.get("random_seed", model_defaults.catboost.random_seed)),
+            verbose=bool(catboost_raw.get("verbose", model_defaults.catboost.verbose)),
+        ),
+        xgboost=XGBoostSettings(
+            n_estimators=int(xgboost_raw.get("n_estimators", model_defaults.xgboost.n_estimators)),
+            max_depth=int(xgboost_raw.get("max_depth", model_defaults.xgboost.max_depth)),
+            learning_rate=float(xgboost_raw.get("learning_rate", model_defaults.xgboost.learning_rate)),
+            random_state=int(xgboost_raw.get("random_state", model_defaults.xgboost.random_state)),
+        ),
+        lightgbm=LightGBMSettings(
+            n_estimators=int(lightgbm_raw.get("n_estimators", model_defaults.lightgbm.n_estimators)),
+            max_depth=int(lightgbm_raw.get("max_depth", model_defaults.lightgbm.max_depth)),
+            learning_rate=float(lightgbm_raw.get("learning_rate", model_defaults.lightgbm.learning_rate)),
+            random_state=int(lightgbm_raw.get("random_state", model_defaults.lightgbm.random_state)),
+        ),
+    )
+    positive_parameters = (
+        models.logistic_regression.max_iter, models.catboost.iterations, models.catboost.depth,
+        models.xgboost.n_estimators, models.xgboost.max_depth,
+        models.lightgbm.n_estimators, models.lightgbm.max_depth,
+    )
+    if any(value <= 0 for value in positive_parameters):
+        raise ConfigurationError("Model iteration/depth parameters must be positive")
+    evaluation_raw = raw.get("evaluation", {})
+    evaluation = EvaluationSettings(
+        primary_metric=str(evaluation_raw.get("primary_metric", "macro_f1")),
+        models_dir=(base / evaluation_raw.get("models_dir", "artifacts/models")).resolve(),
+        results_dir=(base / evaluation_raw.get("results_dir", "artifacts/model_evaluation")).resolve(),
+    )
+    if evaluation.primary_metric != "macro_f1":
+        raise ConfigurationError("Block 3 supports macro_f1 as the primary metric")
     return AppSettings(
         market_data=MarketDataSettings(
             provider=str(_required(market, "provider", "market_data")).lower(),
@@ -194,4 +296,6 @@ def load_settings(path: str | Path = "config.yaml") -> AppSettings:
         target=target,
         split=split,
         ml_dataset=MLDatasetSettings(output_dir),
+        models=models,
+        evaluation=evaluation,
     )
