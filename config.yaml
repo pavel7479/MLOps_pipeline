@@ -136,3 +136,19 @@ mlflow:
   registered_model_name: "crypto_direction_classifier"
   artifact_location: null
   enabled: true
+
+api:
+  host: "127.0.0.1"
+  port: 8000
+  title: "Crypto ML Inference API"
+  version: "1.0.0"
+
+inference:
+  registered_model_name: "crypto_direction_classifier"
+  model_alias: "champion"
+  expected_symbol: "BTCUSDT"
+  expected_timeframe: "1h"
+
+database:
+  url_env_variable: "DATABASE_URL"
+  pool_pre_ping: true

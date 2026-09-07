@@ -1,6 +1,6 @@
-# Crypto ML Platform — market data ingestion
+# Crypto ML Platform — локальный MLOps pipeline
 
-Учебный production-oriented ML-проект по прогнозированию движения криптовалютного рынка. На текущем этапе реализован только надёжный блок получения, проверки, очистки и хранения исторических OHLCV-данных.
+Учебный production-oriented ML-проект по прогнозированию движения криптовалютного рынка: от загрузки OHLCV и feature engineering до временной валидации, backtesting, MLflow Model Registry и локального FastAPI inference API с PostgreSQL.
 
 ## Требования и установка
 
@@ -170,3 +170,37 @@ UI откроется по адресу http://127.0.0.1:5000. Затем соз
 Experiment называется `crypto_direction_classification`, единая Registry-модель — `crypto_direction_classifier`. Alias `champion` указывает на baseline LightGBM этапа 3, а `challenger` — на tuned LightGBM этапа 4. Champion означает лучший текущий кандидат по Validation Macro F1, но не готовность к торговле: обе модели имеют отрицательный backtest и помечены `failed_profitability_check`.
 
 Если `mlflow.enabled: false`, обучение и tuning продолжают работать без сервера. Если tracking включён, недоступный сервер обнаруживается до обучения и приводит к понятной ошибке. Полное описание понятий, данных, fingerprints, aliases и ручной проверки: [docs/mlflow.md](docs/mlflow.md).
+
+## Блок 7 — FastAPI inference API и PostgreSQL
+
+API принимает уже рассчитанный вектор из ровно 28 признаков, загружает один раз при старте модель с alias `champion` из MLflow Model Registry, выполняет классификацию `BUY/HOLD/SELL` и сохраняет результат вместе с версией модели в PostgreSQL. API не получает свечи с биржи и не рассчитывает признаки.
+
+Скопируйте пример окружения и задайте настоящий пароль локального пользователя БД:
+
+~~~powershell
+Copy-Item .env.example .env
+# Отредактируйте DATABASE_URL в .env
+~~~
+
+После установки PostgreSQL создайте БД `mlops_pipeline` и пользователя `mlops_user`, затем примените миграцию:
+
+~~~powershell
+..venvScriptsalembic.exe upgrade head
+..venvScriptspython.exe scriptscheck_database.py
+~~~
+
+MLflow Tracking Server должен быть запущен, а alias `champion` — существовать. В отдельном терминале запустите API:
+
+~~~powershell
+..venvScriptspython.exe -m uvicorn src.api.app:app --host 127.0.0.1 --port 8000
+~~~
+
+Swagger UI доступен по адресу http://127.0.0.1:8000/docs. Проверка реального пути от Registry до PostgreSQL:
+
+~~~powershell
+..venvScriptspython.exe scriptssmoke_test_api.py
+~~~
+
+Основные endpoints: `POST /api/v1/predict`, `GET /api/v1/health/live`, `GET /api/v1/health/ready`, `GET /api/v1/model`, `GET /api/v1/predictions` и `GET /api/v1/predictions/{request_id}`.
+
+Повтор того же запроса с тем же `request_id` возвращает сохранённый ответ с `replayed=true` и не запускает модель второй раз. Тот же ID с изменённым payload получает HTTP 409. Подробная инструкция, JSON-контракт, схема БД, lifecycle модели и ограничения безопасности: [docs/api_and_postgresql.md](docs/api_and_postgresql.md).

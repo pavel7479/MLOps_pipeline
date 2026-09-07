@@ -207,6 +207,28 @@ class MLflowSettings:
     enabled: bool = False
 
 
+@dataclass(frozen=True)
+class APISettings:
+    host: str = "127.0.0.1"
+    port: int = 8000
+    title: str = "Crypto ML Inference API"
+    version: str = "1.0.0"
+
+
+@dataclass(frozen=True)
+class InferenceSettings:
+    registered_model_name: str = "crypto_direction_classifier"
+    model_alias: str = "champion"
+    expected_symbol: str = "BTCUSDT"
+    expected_timeframe: str = "1h"
+
+
+@dataclass(frozen=True)
+class DatabaseSettings:
+    url_env_variable: str = "DATABASE_URL"
+    pool_pre_ping: bool = True
+
+
 
 
 @dataclass(frozen=True)
@@ -226,6 +248,9 @@ class AppSettings:
     search_spaces: SearchSpacesSettings = SearchSpacesSettings()
     backtesting: BacktestingSettings = BacktestingSettings()
     mlflow: MLflowSettings = MLflowSettings()
+    api: APISettings = APISettings()
+    inference: InferenceSettings = InferenceSettings()
+    database: DatabaseSettings = DatabaseSettings()
 
 
 def _required(mapping: dict[str, Any], key: str, section: str) -> Any:
@@ -492,6 +517,49 @@ def load_settings(path: str | Path = "config.yaml") -> AppSettings:
     if not mlflow.registered_model_name:
         raise ConfigurationError("mlflow.registered_model_name cannot be empty")
 
+    api_raw = raw.get("api", {})
+    api = APISettings(
+        host=str(api_raw.get("host", "127.0.0.1")).strip(),
+        port=int(api_raw.get("port", 8000)),
+        title=str(api_raw.get("title", "Crypto ML Inference API")).strip(),
+        version=str(api_raw.get("version", "1.0.0")).strip(),
+    )
+    if not api.host or not api.title or not api.version:
+        raise ConfigurationError("api host, title, and version cannot be empty")
+    if not 1 <= api.port <= 65535:
+        raise ConfigurationError("api.port must be in [1, 65535]")
+
+    inference_raw = raw.get("inference", {})
+    inference = InferenceSettings(
+        registered_model_name=str(
+            inference_raw.get("registered_model_name", mlflow.registered_model_name)
+        ).strip(),
+        model_alias=str(inference_raw.get("model_alias", "champion")).strip(),
+        expected_symbol=str(
+            inference_raw.get("expected_symbol", market.get("symbol", "BTCUSDT"))
+        ).strip().upper(),
+        expected_timeframe=str(
+            inference_raw.get("expected_timeframe", market.get("timeframe", "1h"))
+        ).strip(),
+    )
+    if not all((
+        inference.registered_model_name,
+        inference.model_alias,
+        inference.expected_symbol,
+        inference.expected_timeframe,
+    )):
+        raise ConfigurationError("inference settings cannot be empty")
+
+    database_raw = raw.get("database", {})
+    database = DatabaseSettings(
+        url_env_variable=str(
+            database_raw.get("url_env_variable", "DATABASE_URL")
+        ).strip(),
+        pool_pre_ping=bool(database_raw.get("pool_pre_ping", True)),
+    )
+    if not database.url_env_variable:
+        raise ConfigurationError("database.url_env_variable cannot be empty")
+
 
     return AppSettings(
         market_data=MarketDataSettings(
@@ -523,4 +591,7 @@ def load_settings(path: str | Path = "config.yaml") -> AppSettings:
         search_spaces=search_spaces,
         backtesting=backtesting,
         mlflow=mlflow,
+        api=api,
+        inference=inference,
+        database=database,
     )

@@ -4,6 +4,8 @@ __pycache__/
 .test_tmp/
 *.pyc
 .env
+.env.*
+!.env.example
 .idea/
 .vscode/
 data/raw/*.parquet
