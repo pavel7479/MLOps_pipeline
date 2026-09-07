@@ -1,3 +1,3 @@
-from .settings import AppSettings, load_settings
+from .settings import AppSettings, MLflowSettings, load_settings
 
-__all__ = ["AppSettings", "load_settings"]
+__all__ = ["AppSettings", "MLflowSettings", "load_settings"]

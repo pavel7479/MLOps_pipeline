@@ -12,6 +12,8 @@ import pandas as pd
 from src.config.settings import AppSettings
 from src.dataset.storage import MLDatasetStorage
 from src.models import BaseClassifier, CatBoostModel, LABEL_ORDER, LightGBMModel, XGBoostModel
+from src.mlops import MLflowTracker
+from src.mlops.integration import log_tuning_runs_from_artifacts
 from src.training.evaluator import evaluate_predictions, select_best_model
 from src.training.validator import TrainingDataValidator
 
@@ -25,11 +27,17 @@ LOGGER = logging.getLogger(__name__)
 class HyperparameterTuningPipeline:
     """Tune on Train folds, then evaluate fitted winners once on Validation."""
 
-    def __init__(self, settings: AppSettings, tuner: HyperparameterTuner | None = None) -> None:
+    def __init__(
+        self,
+        settings: AppSettings,
+        tuner: HyperparameterTuner | None = None,
+        tracker: MLflowTracker | None = None,
+    ) -> None:
         self.settings = settings
         self.tuner = tuner or HyperparameterTuner(settings)
         self.validator = TrainingDataValidator()
         self.storage = MLDatasetStorage()
+        self.tracker = tracker or MLflowTracker(settings.mlflow)
 
     @property
     def dataset_paths(self) -> dict[str, Path]:
@@ -232,6 +240,7 @@ class HyperparameterTuningPipeline:
     def run(self) -> TuningReport:
         """Execute all searches before loading Validation; never read Test."""
         LOGGER.info("Starting Block 4 tuning; search reads Train only and Test remains reserved")
+        self.tracker.check_health()
         train, feature_names, test_exists = self._load_train()
         baseline_scores = self._load_block3_scores()
         gap_rows = derive_gap_rows(
@@ -328,6 +337,9 @@ class HyperparameterTuningPipeline:
         LOGGER.info(
             "Block 4 complete; best tuned Validation model=%s macro_f1=%.6f",
             best["model"], best["macro_f1"],
+        )
+        log_tuning_runs_from_artifacts(
+            self.settings, self.tracker, origin="direct_tuning"
         )
         return TuningReport(
             train_rows=len(train),

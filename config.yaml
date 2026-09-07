@@ -129,3 +129,10 @@ backtesting:
       display_name: Tuned LightGBM
       model_version: block_4_tuned
       model_path: artifacts/tuned_models/lightgbm_tuned.joblib
+
+mlflow:
+  tracking_uri: "http://127.0.0.1:5000"
+  experiment_name: "crypto_direction_classification"
+  registered_model_name: "crypto_direction_classifier"
+  artifact_location: null
+  enabled: true

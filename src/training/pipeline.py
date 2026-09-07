@@ -21,6 +21,8 @@ from src.models import (
     LogisticRegressionModel,
     XGBoostModel,
 )
+from src.mlops import MLflowTracker
+from src.mlops.integration import log_baseline_model
 
 from .evaluator import evaluate_predictions, select_best_model
 from .models import ModelTrainingReport
@@ -32,10 +34,13 @@ LOGGER = logging.getLogger(__name__)
 class ModelTrainingPipeline:
     """Train five classifiers on Train and select only on Validation."""
 
-    def __init__(self, settings: AppSettings) -> None:
+    def __init__(
+        self, settings: AppSettings, tracker: MLflowTracker | None = None
+    ) -> None:
         self.settings = settings
         self.validator = TrainingDataValidator()
         self.storage = MLDatasetStorage()
+        self.tracker = tracker or MLflowTracker(settings.mlflow)
 
     @property
     def dataset_paths(self) -> dict[str, Path]:
@@ -150,6 +155,7 @@ class ModelTrainingPipeline:
     def run(self) -> ModelTrainingReport:
         """Train, evaluate, persist, compare, and return validation results."""
         LOGGER.info("Starting model training pipeline; Test is reserved and will not be read")
+        self.tracker.check_health()
         train, validation, feature_names, test_exists = self._load_inputs()
         LOGGER.info(
             "Training inputs: train=%d validation=%d features=%d",
@@ -186,6 +192,18 @@ class ModelTrainingPipeline:
             if not np.array_equal(predicted, loaded.predict(validation_features)):
                 raise RuntimeError(f"{model.name} predictions changed after save/load")
             model_paths[model.name] = model_path
+            log_baseline_model(
+                self.tracker,
+                self.settings,
+                model,
+                evaluation,
+                train,
+                validation,
+                feature_names,
+                model_path,
+                importances[model.name],
+                model_coefficients,
+            )
             LOGGER.info(
                 "%s trained in %.3fs; validation macro_f1=%.6f; saved=%s",
                 model.name, elapsed, evaluation["macro_f1"], model_path,

@@ -196,6 +196,17 @@ class BacktestingSettings:
     strategies: tuple[BacktestStrategySettings, ...] = ()
 
 
+@dataclass(frozen=True)
+class MLflowSettings:
+    """Local MLflow tracking and registry configuration."""
+
+    tracking_uri: str = "http://127.0.0.1:5000"
+    experiment_name: str = "crypto_direction_classification"
+    registered_model_name: str = "crypto_direction_classifier"
+    artifact_location: str | None = None
+    enabled: bool = False
+
+
 
 
 @dataclass(frozen=True)
@@ -214,6 +225,7 @@ class AppSettings:
     hyperparameter_search: HyperparameterSearchSettings = HyperparameterSearchSettings()
     search_spaces: SearchSpacesSettings = SearchSpacesSettings()
     backtesting: BacktestingSettings = BacktestingSettings()
+    mlflow: MLflowSettings = MLflowSettings()
 
 
 def _required(mapping: dict[str, Any], key: str, section: str) -> Any:
@@ -459,6 +471,27 @@ def load_settings(path: str | Path = "config.yaml") -> AppSettings:
     if not backtesting.force_close_at_end:
         raise ConfigurationError("Block 5 requires force_close_at_end=true")
 
+    mlflow_raw = raw.get("mlflow", {})
+    mlflow_defaults = MLflowSettings()
+    artifact_location = mlflow_raw.get("artifact_location", mlflow_defaults.artifact_location)
+    mlflow = MLflowSettings(
+        tracking_uri=str(mlflow_raw.get("tracking_uri", mlflow_defaults.tracking_uri)).strip(),
+        experiment_name=str(
+            mlflow_raw.get("experiment_name", mlflow_defaults.experiment_name)
+        ).strip(),
+        registered_model_name=str(
+            mlflow_raw.get("registered_model_name", mlflow_defaults.registered_model_name)
+        ).strip(),
+        artifact_location=None if artifact_location is None else str(artifact_location).strip(),
+        enabled=bool(mlflow_raw.get("enabled", mlflow_defaults.enabled)),
+    )
+    if not mlflow.tracking_uri:
+        raise ConfigurationError("mlflow.tracking_uri cannot be empty")
+    if not mlflow.experiment_name:
+        raise ConfigurationError("mlflow.experiment_name cannot be empty")
+    if not mlflow.registered_model_name:
+        raise ConfigurationError("mlflow.registered_model_name cannot be empty")
+
 
     return AppSettings(
         market_data=MarketDataSettings(
@@ -489,4 +522,5 @@ def load_settings(path: str | Path = "config.yaml") -> AppSettings:
         hyperparameter_search=hyperparameter_search,
         search_spaces=search_spaces,
         backtesting=backtesting,
+        mlflow=mlflow,
     )

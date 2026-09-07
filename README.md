@@ -139,3 +139,34 @@ Pipeline загружает сохранённые LightGBM этапа 3 и tune
 Стратегия работает только в состояниях FLAT/LONG, без short и leverage, с all-in размером позиции. Комиссия и configurable slippage учитываются при исполнении. Сохраняются equity curves, trade logs, доходность, excess return, drawdown, hourly Sharpe, статистика сделок, exposure и fees.
 
 Test dataset не читается. Это виртуальная историческая проверка на Validation, а не реальная торговля и не доказательство будущей прибыльности. Подробности: [docs/backtesting.md](docs/backtesting.md).
+
+## Блок 6 — MLflow Tracking и Model Registry
+
+MLflow 3 используется как дополнительный локальный слой наблюдаемости. Metadata хранится в SQLite `data/mlflow/mlflow.db`, а модели и прочие run artifacts — в `mlartifacts/`. Оба runtime-хранилища исключены из Git.
+
+Сначала из корня проекта запустите сервер в отдельном PowerShell:
+
+~~~powershell
+.\.venv\Scripts\mlflow.exe server `
+  --backend-store-uri sqlite:///data/mlflow/mlflow.db `
+  --artifacts-destination ./mlartifacts `
+  --host 127.0.0.1 `
+  --port 5000
+~~~
+
+UI откроется по адресу http://127.0.0.1:5000. Затем создайте пять новых baseline runs:
+
+~~~powershell
+.\.venv\Scripts\python.exe scripts\train_models.py
+~~~
+
+Импортируйте сохранённые результаты tuning и backtesting без повторного дорогого поиска и создайте Registry:
+
+~~~powershell
+.\.venv\Scripts\python.exe scripts\import_tuning_runs_to_mlflow.py
+.\.venv\Scripts\python.exe scripts\check_mlflow_registry.py
+~~~
+
+Experiment называется `crypto_direction_classification`, единая Registry-модель — `crypto_direction_classifier`. Alias `champion` указывает на baseline LightGBM этапа 3, а `challenger` — на tuned LightGBM этапа 4. Champion означает лучший текущий кандидат по Validation Macro F1, но не готовность к торговле: обе модели имеют отрицательный backtest и помечены `failed_profitability_check`.
+
+Если `mlflow.enabled: false`, обучение и tuning продолжают работать без сервера. Если tracking включён, недоступный сервер обнаруживается до обучения и приводит к понятной ошибке. Полное описание понятий, данных, fingerprints, aliases и ручной проверки: [docs/mlflow.md](docs/mlflow.md).

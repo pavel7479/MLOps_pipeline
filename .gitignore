@@ -23,3 +23,6 @@ artifacts/hyperparameter_search/*
 !artifacts/hyperparameter_search/.gitkeep
 artifacts/backtesting/*
 !artifacts/backtesting/.gitkeep
+data/mlflow/*.db
+data/mlflow/*.db-*
+mlartifacts/
