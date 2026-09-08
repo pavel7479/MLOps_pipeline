@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 from uuid import uuid4
@@ -21,12 +22,22 @@ def main() -> int:
     parser.add_argument("--base-url", default=None)
     args = parser.parse_args()
     settings = load_settings(args.config)
-    base_url = args.base_url or (
+    base_url = args.base_url or os.getenv("API_BASE_URL") or (
         f"http://{settings.api.host}:{settings.api.port}"
     )
     stem = f"{settings.market_data.symbol}_{settings.market_data.timeframe}"
-    validation_path = settings.ml_dataset.output_dir / f"{stem}_validation.parquet"
-    manifest_path = settings.ml_dataset.output_dir / "feature_manifest.json"
+    validation_path = Path(
+        os.getenv(
+            "VALIDATION_DATA_PATH",
+            str(settings.ml_dataset.output_dir / f"{stem}_validation.parquet"),
+        )
+    )
+    manifest_path = Path(
+        os.getenv(
+            "FEATURE_MANIFEST_PATH",
+            str(settings.ml_dataset.output_dir / "feature_manifest.json"),
+        )
+    )
     feature_names = json.loads(manifest_path.read_text(encoding="utf-8"))["features"]
     validation = pd.read_parquet(validation_path)
     row = validation.iloc[0]

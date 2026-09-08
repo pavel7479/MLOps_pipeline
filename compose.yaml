@@ -1,0 +1,197 @@
+name: crypto-ml-platform
+
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-application-environment: &application-environment
+  DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-mlops_user}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.docker}@postgres:5432/${POSTGRES_DB:-mlops_pipeline}"
+  MLFLOW_TRACKING_URI: "http://mlflow:5000"
+
+services:
+  postgres:
+    image: postgres:17.11
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-mlops_pipeline}"
+      POSTGRES_USER: "${POSTGRES_USER:-mlops_user}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.docker}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks:
+      - mlops_network
+    logging: *default-logging
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.16.0
+    restart: unless-stopped
+    command:
+      - mlflow
+      - server
+      - --backend-store-uri
+      - sqlite:////mlflow/data/mlflow.db
+      - --artifacts-destination
+      - /mlflow/artifacts
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+      - --workers
+      - "1"
+      - --allowed-hosts
+      - mlflow,mlflow:5000,localhost,localhost:5000,127.0.0.1,127.0.0.1:5000
+    ports:
+      - "127.0.0.1:${MLFLOW_HOST_PORT:-5000}:5000"
+    volumes:
+      - ./data/mlflow:/mlflow/data
+      - ./mlartifacts:/mlflow/artifacts
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    networks:
+      - mlops_network
+    logging: *default-logging
+
+  migrate:
+    image: crypto-ml-api:stage8
+    build:
+      context: .
+      target: runtime
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *application-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mlops_network
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  mlflow-init:
+    image: crypto-ml-api:stage8
+    build:
+      context: .
+      target: runtime
+    command:
+      - python
+      - scripts/init_mlflow_registry.py
+      - --baseline-model
+      - /bootstrap/models/lightgbm.joblib
+      - --tuned-model
+      - /bootstrap/tuned_models/lightgbm_tuned.joblib
+      - --feature-manifest
+      - /bootstrap/feature_manifest.json
+    environment:
+      <<: *application-environment
+    volumes:
+      - ./artifacts/models:/bootstrap/models:ro
+      - ./artifacts/tuned_models:/bootstrap/tuned_models:ro
+      - ./data/ml/feature_manifest.json:/bootstrap/feature_manifest.json:ro
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    networks:
+      - mlops_network
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  api:
+    image: crypto-ml-api:stage8
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    environment:
+      <<: *application-environment
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      mlflow:
+        condition: service_healthy
+      mlflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+    networks:
+      - mlops_network
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  unit-tests:
+    image: crypto-ml-api-test:stage8
+    build:
+      context: .
+      target: test
+    command: ["python", "-m", "pytest", "-v"]
+    profiles:
+      - test
+    networks:
+      - mlops_network
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  integration-tests:
+    image: crypto-ml-api-test:stage8
+    build:
+      context: .
+      target: test
+    command: ["python", "scripts/smoke_test_api.py"]
+    environment:
+      API_BASE_URL: "http://api:8000"
+      VALIDATION_DATA_PATH: "/testdata/BTCUSDT_1h_validation.parquet"
+      FEATURE_MANIFEST_PATH: "/testdata/feature_manifest.json"
+      MLFLOW_TRACKING_URI: "http://mlflow:5000"
+    volumes:
+      - ./data/ml/BTCUSDT_1h_validation.parquet:/testdata/BTCUSDT_1h_validation.parquet:ro
+      - ./data/ml/feature_manifest.json:/testdata/feature_manifest.json:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    profiles:
+      - test
+    networks:
+      - mlops_network
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+networks:
+  mlops_network:
+    driver: bridge
+
+volumes:
+  postgres_data:

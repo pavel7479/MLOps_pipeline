@@ -204,3 +204,28 @@ Swagger UI доступен по адресу http://127.0.0.1:8000/docs. Про
 Основные endpoints: `POST /api/v1/predict`, `GET /api/v1/health/live`, `GET /api/v1/health/ready`, `GET /api/v1/model`, `GET /api/v1/predictions` и `GET /api/v1/predictions/{request_id}`.
 
 Повтор того же запроса с тем же `request_id` возвращает сохранённый ответ с `replayed=true` и не запускает модель второй раз. Тот же ID с изменённым payload получает HTTP 409. Подробная инструкция, JSON-контракт, схема БД, lifecycle модели и ограничения безопасности: [docs/api_and_postgresql.md](docs/api_and_postgresql.md).
+
+## Блок 8 — Docker quick start
+
+Для запуска всей системы нужен Docker Desktop с Docker Compose. Скопируйте безопасный шаблон окружения и замените пароль:
+
+~~~powershell
+Copy-Item .env.docker.example .env.docker
+# Задайте свой POSTGRES_PASSWORD в .env.docker
+docker compose --env-file .env.docker build
+docker compose --env-file .env.docker up -d
+docker compose --env-file .env.docker ps
+~~~
+
+По умолчанию Swagger доступен на http://127.0.0.1:8000/docs, а MLflow UI — на http://127.0.0.1:5000. Если эти порты заняты локальными процессами, задайте в `.env.docker`, например, `API_HOST_PORT=18000` и `MLFLOW_HOST_PORT=15000`.
+
+Полная Linux-проверка и интеграционный smoke-test запускаются так:
+
+~~~powershell
+docker compose --env-file .env.docker --profile test run --rm unit-tests
+docker compose --env-file .env.docker --profile test run --rm integration-tests
+~~~
+
+Обычная остановка `docker compose --env-file .env.docker down` сохраняет PostgreSQL volume и MLflow-файлы. Команда `down -v` удаляет named volume PostgreSQL вместе с историей прогнозов — используйте её только если действительно хотите стереть контейнерную БД.
+
+Подробное объяснение архитектуры, команд, persistence и диагностики: [docs/docker.md](docs/docker.md).

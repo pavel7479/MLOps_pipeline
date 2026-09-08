@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 from typing import Any
 
@@ -500,7 +501,10 @@ def load_settings(path: str | Path = "config.yaml") -> AppSettings:
     mlflow_defaults = MLflowSettings()
     artifact_location = mlflow_raw.get("artifact_location", mlflow_defaults.artifact_location)
     mlflow = MLflowSettings(
-        tracking_uri=str(mlflow_raw.get("tracking_uri", mlflow_defaults.tracking_uri)).strip(),
+        tracking_uri=os.getenv(
+            "MLFLOW_TRACKING_URI",
+            str(mlflow_raw.get("tracking_uri", mlflow_defaults.tracking_uri)),
+        ).strip(),
         experiment_name=str(
             mlflow_raw.get("experiment_name", mlflow_defaults.experiment_name)
         ).strip(),
