@@ -1,0 +1,18 @@
+# Isolation overlay for GitHub Actions and local CI acceptance runs.
+services:
+  mlflow:
+    volumes:
+      - mlflow_ci_data:/mlflow/data
+      - mlflow_ci_artifacts:/mlflow/artifacts
+
+  mlflow-init:
+    environment:
+      REGISTRY_BOOTSTRAP_PROFILE: ci-fixture
+    volumes:
+      - ./.ci-runtime/models:/bootstrap/models:ro
+      - ./.ci-runtime/tuned_models:/bootstrap/tuned_models:ro
+      - ./tests/fixtures/feature_manifest.json:/bootstrap/feature_manifest.json:ro
+
+volumes:
+  mlflow_ci_data:
+  mlflow_ci_artifacts:

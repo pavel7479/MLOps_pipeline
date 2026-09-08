@@ -16,6 +16,50 @@ import pandas as pd
 from src.config import load_settings
 
 
+def build_payload(
+    settings,
+    feature_names: list[str],
+    *,
+    validation_path: Path,
+    sample_path: Path | None,
+) -> dict:
+    """Build one request from a versioned CI fixture or local Validation row."""
+    request_id = str(uuid4())
+    if sample_path is not None:
+        sample = json.loads(sample_path.read_text(encoding="utf-8"))
+        sample_features = sample.get("features")
+        if not isinstance(sample_features, dict):
+            raise ValueError("Inference sample must contain a features object")
+        missing = [name for name in feature_names if name not in sample_features]
+        unexpected = sorted(set(sample_features) - set(feature_names))
+        if missing or unexpected:
+            raise ValueError(
+                "Inference sample does not match feature manifest: "
+                f"missing={missing}, unexpected={unexpected}"
+            )
+        return {
+            "request_id": request_id,
+            "symbol": sample.get("symbol", settings.inference.expected_symbol),
+            "timeframe": sample.get(
+                "timeframe", settings.inference.expected_timeframe
+            ),
+            "feature_timestamp": sample["feature_timestamp"],
+            "features": {
+                name: float(sample_features[name]) for name in feature_names
+            },
+        }
+
+    validation = pd.read_parquet(validation_path)
+    row = validation.iloc[0]
+    return {
+        "request_id": request_id,
+        "symbol": settings.inference.expected_symbol,
+        "timeframe": settings.inference.expected_timeframe,
+        "feature_timestamp": pd.Timestamp(row["timestamp"]).isoformat(),
+        "features": {name: float(row[name]) for name in feature_names},
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=ROOT / "config.yaml")
@@ -39,16 +83,14 @@ def main() -> int:
         )
     )
     feature_names = json.loads(manifest_path.read_text(encoding="utf-8"))["features"]
-    validation = pd.read_parquet(validation_path)
-    row = validation.iloc[0]
-    request_id = str(uuid4())
-    payload = {
-        "request_id": request_id,
-        "symbol": settings.inference.expected_symbol,
-        "timeframe": settings.inference.expected_timeframe,
-        "feature_timestamp": pd.Timestamp(row["timestamp"]).isoformat(),
-        "features": {name: float(row[name]) for name in feature_names},
-    }
+    sample_value = os.getenv("INFERENCE_SAMPLE_PATH")
+    payload = build_payload(
+        settings,
+        feature_names,
+        validation_path=validation_path,
+        sample_path=Path(sample_value) if sample_value else None,
+    )
+    request_id = payload["request_id"]
 
     with httpx.Client(base_url=base_url, timeout=30) as client:
         live = client.get("/api/v1/health/live")

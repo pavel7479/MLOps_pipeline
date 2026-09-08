@@ -7,6 +7,7 @@ __pycache__/
 .env.*
 !.env.example
 !.env.docker.example
+!.env.ci.example
 .idea/
 .vscode/
 data/raw/*.parquet
@@ -29,3 +30,4 @@ artifacts/backtesting/*
 data/mlflow/*.db
 data/mlflow/*.db-*
 mlartifacts/
+.ci-runtime/

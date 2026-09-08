@@ -56,7 +56,12 @@ RUN --mount=type=bind,from=test-builder,source=/test-wheels,target=/test-wheels 
     && python -m pip check
 
 COPY --chown=appuser:appuser tests ./tests
-COPY --chown=appuser:appuser scripts/smoke_test_api.py ./scripts/smoke_test_api.py
+COPY --chown=appuser:appuser .github ./.github
+COPY --chown=appuser:appuser .env.ci.example compose.ci.yaml ./
+COPY --chown=appuser:appuser scripts/smoke_test_api.py \
+    scripts/create_ci_bootstrap_artifacts.py \
+    scripts/wait_for_compose.py \
+    ./scripts/
 COPY --chown=appuser:appuser Dockerfile compose.yaml .dockerignore ./
 
 USER appuser

@@ -101,28 +101,50 @@ def initialize_registry(
     baseline_model_path: Path,
     tuned_model_path: Path,
     manifest_path: Path,
+    bootstrap_profile: str = "saved-models",
 ) -> BootstrapResult:
     """Check aliases and bootstrap missing versions without training or datasets."""
+    if bootstrap_profile not in {"saved-models", "ci-fixture"}:
+        raise ValueError(
+            "bootstrap_profile must be either 'saved-models' or 'ci-fixture'"
+        )
     tracker = MLflowTracker(settings.mlflow)
     tracker.check_health()
     if tracker.experiment_id is None:
         raise RuntimeError("MLflow must be enabled for Registry initialization")
     registry = ModelRegistry(settings.mlflow)
     gateway = MLflowRegistryGateway(registry)
+    ci_fixture = bootstrap_profile == "ci-fixture"
     sources = (
         BootstrapSource(
             alias="champion",
-            run_name="docker_bootstrap_baseline_lightgbm",
+            run_name=(
+                "ci_bootstrap_champion_fixture"
+                if ci_fixture
+                else "docker_bootstrap_baseline_lightgbm"
+            ),
             model_path=baseline_model_path,
-            source_stage="block_3",
-            bootstrap_key="baseline_lightgbm_block_3",
+            source_stage="ci_fixture" if ci_fixture else "block_3",
+            bootstrap_key=(
+                "ci_champion_fixture"
+                if ci_fixture
+                else "baseline_lightgbm_block_3"
+            ),
         ),
         BootstrapSource(
             alias="challenger",
-            run_name="docker_bootstrap_tuned_lightgbm",
+            run_name=(
+                "ci_bootstrap_challenger_fixture"
+                if ci_fixture
+                else "docker_bootstrap_tuned_lightgbm"
+            ),
             model_path=tuned_model_path,
-            source_stage="block_4",
-            bootstrap_key="tuned_lightgbm_block_4",
+            source_stage="ci_fixture" if ci_fixture else "block_4",
+            bootstrap_key=(
+                "ci_challenger_fixture"
+                if ci_fixture
+                else "tuned_lightgbm_block_4"
+            ),
         ),
     )
 
@@ -147,15 +169,17 @@ def initialize_registry(
             [{feature: 0.0 for feature in feature_names}],
             columns=feature_names,
         )
+        model_family = classifier.name
         run_id = tracker.start_run(
             source.run_name,
             {
                 "project": "crypto_ml_platform",
                 "pipeline_stage": "block_8_registry_bootstrap",
                 "source_stage": source.source_stage,
-                "model_family": "lightgbm",
+                "model_family": model_family,
                 "bootstrap_key": source.bootstrap_key,
                 "test_dataset_used": "false",
+                "ci_fixture": str(ci_fixture).lower(),
             },
         )
         if run_id is None:
@@ -183,15 +207,24 @@ def initialize_registry(
         return registry.register_run_model(
             run_id,
             description=(
-                f"Restored from saved {source.source_stage} artifact by the "
-                "idempotent Block 8 container bootstrap; no training performed."
+                "Disposable deterministic CI fixture; no training or model "
+                "promotion performed."
+                if ci_fixture
+                else f"Restored from saved {source.source_stage} artifact by "
+                "the idempotent Block 8 container bootstrap; no training "
+                "performed."
             ),
             tags={
                 "source_stage": source.source_stage,
-                "model_type": "lightgbm",
-                "validation_status": "passed",
-                "backtest_status": "failed_profitability_check",
+                "model_type": model_family,
+                "validation_status": "ci_only" if ci_fixture else "passed",
+                "backtest_status": (
+                    "not_evaluated_ci_fixture"
+                    if ci_fixture
+                    else "failed_profitability_check"
+                ),
                 "bootstrap_key": source.bootstrap_key,
+                "ci_fixture": str(ci_fixture).lower(),
             },
         )
 
