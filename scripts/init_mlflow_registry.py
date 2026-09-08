@@ -1,6 +1,7 @@
 """Check or restore champion/challenger aliases for the container stack."""
 
 import argparse
+import os
 from pathlib import Path
 import sys
 
@@ -29,12 +30,19 @@ def main() -> int:
         type=Path,
         default=Path("/bootstrap/feature_manifest.json"),
     )
+    parser.add_argument(
+        "--bootstrap-profile",
+        choices=("saved-models", "ci-fixture"),
+        default=os.getenv("REGISTRY_BOOTSTRAP_PROFILE", "saved-models"),
+        help="Use saved project models locally or deterministic fixtures in CI.",
+    )
     args = parser.parse_args()
     result = initialize_registry(
         load_settings(args.config),
         baseline_model_path=args.baseline_model,
         tuned_model_path=args.tuned_model,
         manifest_path=args.feature_manifest,
+        bootstrap_profile=args.bootstrap_profile,
     )
     created = ", ".join(result.created_aliases) or "none"
     print(

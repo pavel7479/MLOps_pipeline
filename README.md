@@ -229,3 +229,25 @@ docker compose --env-file .env.docker --profile test run --rm integration-tests
 Обычная остановка `docker compose --env-file .env.docker down` сохраняет PostgreSQL volume и MLflow-файлы. Команда `down -v` удаляет named volume PostgreSQL вместе с историей прогнозов — используйте её только если действительно хотите стереть контейнерную БД.
 
 Подробное объяснение архитектуры, команд, persistence и диагностики: [docs/docker.md](docs/docker.md).
+
+## Блок 9 — GitHub Actions CI/CD и GHCR
+
+Каждый push и Pull Request запускает на чистом Ubuntu runner полный набор
+Python tests, проверку Compose, сборку runtime image, pytest внутри Linux image
+и интеграционный стек PostgreSQL + MLflow + Alembic + FastAPI. Стадии связаны
+через `needs`: после любой ошибки следующие проверки и публикация не
+выполняются.
+
+После зелёного CI для push в `main` отдельный workflow публикует API в
+`ghcr.io/<owner>/<repository>/api` с тегами `main` и
+`sha-<полный-commit>`. Pull Request только собирает и проверяет image. GHCR
+получает встроенный `GITHUB_TOKEN`; package write не выдаётся остальным jobs.
+
+CI использует ровно 28 версионированных fixture-признаков и отдельный
+одноразовый MLflow Registry. Он не скачивает Binance data, не читает
+`BTCUSDT_1h_test.parquet`, не обучает модели и не меняет настоящий
+`champion`.
+
+Полная схема pipeline, локальные команды, фактические job names для branch
+ruleset, permissions, immutable digest, rollback и граница будущего production
+deployment описаны в [docs/ci_cd.md](docs/ci_cd.md).

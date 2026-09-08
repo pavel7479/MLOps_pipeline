@@ -1,5 +1,4 @@
 .git
-.github
 .venv
 __pycache__
 *.pyc
@@ -12,6 +11,7 @@ htmlcov
 .env.*
 !.env.example
 !.env.docker.example
+!.env.ci.example
 
 data/raw
 data/processed
@@ -22,5 +22,6 @@ mlartifacts
 logs
 tmp
 .test_tmp
+.ci-runtime
 
 artifacts

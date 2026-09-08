@@ -102,6 +102,7 @@ services:
       - /bootstrap/feature_manifest.json
     environment:
       <<: *application-environment
+      REGISTRY_BOOTSTRAP_PROFILE: "${REGISTRY_BOOTSTRAP_PROFILE:-saved-models}"
     volumes:
       - ./artifacts/models:/bootstrap/models:ro
       - ./artifacts/tuned_models:/bootstrap/tuned_models:ro
@@ -172,12 +173,12 @@ services:
     command: ["python", "scripts/smoke_test_api.py"]
     environment:
       API_BASE_URL: "http://api:8000"
-      VALIDATION_DATA_PATH: "/testdata/BTCUSDT_1h_validation.parquet"
+      INFERENCE_SAMPLE_PATH: "/testdata/inference_sample.json"
       FEATURE_MANIFEST_PATH: "/testdata/feature_manifest.json"
       MLFLOW_TRACKING_URI: "http://mlflow:5000"
     volumes:
-      - ./data/ml/BTCUSDT_1h_validation.parquet:/testdata/BTCUSDT_1h_validation.parquet:ro
-      - ./data/ml/feature_manifest.json:/testdata/feature_manifest.json:ro
+      - ./tests/fixtures/inference_sample.json:/testdata/inference_sample.json:ro
+      - ./tests/fixtures/feature_manifest.json:/testdata/feature_manifest.json:ro
     depends_on:
       api:
         condition: service_healthy
