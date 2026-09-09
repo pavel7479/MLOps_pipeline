@@ -284,3 +284,12 @@ docker compose --env-file .env.docker --profile test run --rm integration-tests
 Важно: лучший сохранённый backtest имеет доходность **-50.349%** и статус **`failed_profitability_check`**. Проект не утверждает прибыльность и не выполняет реальную торговлю. Drift не равен плохой модели, отсутствие drift не равно точности; live F1, Alertmanager/внешние уведомления, auto-retraining/promotion, remote deployment и Kubernetes не входят в этот этап.
 
 Документация: [monitoring](docs/monitoring.md), [архитектура](docs/architecture.md), [runbook](docs/runbook.md), [Docker](docs/docker.md), [CI/CD](docs/ci_cd.md).
+
+
+Запуск проекта:
+cd D:\Pavel\MLOps_pipeline
+docker compose --env-file .env.docker up -d
+docker compose --env-file .env.docker ps --all
+
+Вход в Grafana:
+admin
