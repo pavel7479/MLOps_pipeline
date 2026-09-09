@@ -152,3 +152,13 @@ inference:
 database:
   url_env_variable: "DATABASE_URL"
   pool_pre_ping: true
+
+monitoring:
+  reference_path: monitoring/reference/BTCUSDT_1h_train_reference.json
+  window_size: 500
+  min_samples: 100
+  poll_interval_seconds: 60
+  metrics_host: "0.0.0.0"
+  metrics_port: 9101
+  warning_threshold: 0.10
+  critical_threshold: 0.25

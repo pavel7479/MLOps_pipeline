@@ -13,6 +13,21 @@ services:
       - ./.ci-runtime/tuned_models:/bootstrap/tuned_models:ro
       - ./tests/fixtures/feature_manifest.json:/bootstrap/feature_manifest.json:ro
 
+  monitoring-worker:
+    environment:
+      MONITORING_MIN_SAMPLES: "5"
+      MONITORING_POLL_INTERVAL_SECONDS: "2"
+
+  prometheus:
+    volumes:
+      - prometheus_ci_data:/prometheus
+
+  grafana:
+    volumes:
+      - grafana_ci_data:/var/lib/grafana
+
 volumes:
   mlflow_ci_data:
   mlflow_ci_artifacts:
+  prometheus_ci_data:
+  grafana_ci_data:

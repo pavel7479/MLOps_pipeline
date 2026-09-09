@@ -1,0 +1,70 @@
+groups:
+  - name: crypto-ml-platform
+    rules:
+      - alert: CryptoApiDown
+        expr: up{job="crypto-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Crypto inference API is unavailable
+      - alert: MonitoringWorkerDown
+        expr: up{job="crypto-ml-monitor"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: ML monitoring worker is unavailable
+      - alert: DatabaseUnavailable
+        expr: crypto_database_reachable == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Monitoring worker cannot reach PostgreSQL
+      - alert: MlflowUnavailable
+        expr: crypto_mlflow_reachable == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Monitoring worker cannot reach MLflow
+      - alert: HighHttpErrorRate
+        expr: |
+          (
+            sum(rate(crypto_http_requests_total{status_code=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(crypto_http_requests_total[5m])), 0.001)
+          ) > 0.05
+          and on() sum(increase(crypto_http_requests_total[5m])) >= 20
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: API 5xx ratio exceeds 5 percent with sufficient traffic
+      - alert: HighApiLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(crypto_http_request_duration_seconds_bucket[5m]))
+          ) > 0.5
+          and on() sum(increase(crypto_http_request_duration_seconds_count[5m])) >= 20
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: API p95 latency exceeds 500 ms with sufficient traffic
+      - alert: CriticalFeatureDrift
+        expr: crypto_feature_drift_available == 1 and on() crypto_drift_critical_features > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: At least one feature has critical PSI drift
+      - alert: PredictionClassDominance
+        expr: max(crypto_recent_prediction_share) > 0.90 and on() crypto_monitoring_window_samples >= 100
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: One prediction class exceeds 90 percent of the recent window

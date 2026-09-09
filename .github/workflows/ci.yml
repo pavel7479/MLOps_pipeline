@@ -84,7 +84,7 @@ jobs:
           test -n "$user"
           test "$user" != "root"
           docker run --rm --entrypoint sh "$RUNTIME_IMAGE" -ec '
-            for forbidden in .env .env.docker BTCUSDT_1h_test.parquet .venv; do
+            for forbidden in .env .env.docker BTCUSDT_1h_train.parquet BTCUSDT_1h_validation.parquet BTCUSDT_1h_test.parquet .venv; do
               if find /app -name "$forbidden" -print -quit | grep -q .; then
                 echo "Forbidden runtime content: $forbidden" >&2
                 exit 1
@@ -137,28 +137,30 @@ jobs:
       - name: Build disposable stack images
         shell: bash
         run: |
-          docker buildx build --target runtime --load --tag crypto-ml-api:stage8 --cache-from type=gha,scope=runtime --cache-to type=gha,mode=max,scope=runtime .
-          docker buildx build --target test --load --tag crypto-ml-api-test:stage8 --cache-from type=gha,scope=test --cache-to type=gha,mode=max,scope=test .
+          docker buildx build --target runtime --load --tag crypto-ml-api:stage10 --cache-from type=gha,scope=runtime --cache-to type=gha,mode=max,scope=runtime .
+          docker buildx build --target test --load --tag crypto-ml-api-test:stage10 --cache-from type=gha,scope=test --cache-to type=gha,mode=max,scope=test .
       - name: Create deterministic CI Registry fixtures
         shell: bash
         run: |
           mkdir -p .ci-runtime
-          docker run --rm --user 0 --volume "$PWD/.ci-runtime:/ci-output" --volume "$PWD/tests/fixtures/feature_manifest.json:/ci-input/feature_manifest.json:ro" crypto-ml-api-test:stage8 python scripts/create_ci_bootstrap_artifacts.py --output-root /ci-output --feature-manifest /ci-input/feature_manifest.json
+          docker run --rm --user 0 --volume "$PWD/.ci-runtime:/ci-output" --volume "$PWD/tests/fixtures/feature_manifest.json:/ci-input/feature_manifest.json:ro" crypto-ml-api-test:stage10 python scripts/create_ci_bootstrap_artifacts.py --output-root /ci-output --feature-manifest /ci-input/feature_manifest.json
       - name: Start stack, wait for health, and run smoke test
         id: integration
         shell: bash
         run: |
-          docker compose --env-file .env.ci.example -f compose.yaml -f compose.ci.yaml up --detach --no-build postgres mlflow migrate mlflow-init api
+          docker compose --env-file .env.ci.example -f compose.yaml -f compose.ci.yaml up --detach --no-build postgres mlflow migrate mlflow-init api monitoring-worker prometheus grafana
           python scripts/wait_for_compose.py --project-name "$COMPOSE_PROJECT_NAME" --env-file .env.ci.example --timeout 240
+          docker compose --env-file .env.ci.example -f compose.yaml -f compose.ci.yaml exec -T prometheus promtool check config /etc/prometheus/prometheus.yml
+          docker compose --env-file .env.ci.example -f compose.yaml -f compose.ci.yaml exec -T prometheus promtool check rules /etc/prometheus/rules.yml
           docker compose --env-file .env.ci.example -f compose.yaml -f compose.ci.yaml --profile test run --rm --no-deps integration-tests
-          test "$(docker compose --env-file .env.ci.example -f compose.yaml -f compose.ci.yaml exec -T postgres psql -U ci_user -d ci_db -tAc 'SELECT COUNT(*) FROM predictions;')" = "1"
+          test "$(docker compose --env-file .env.ci.example -f compose.yaml -f compose.ci.yaml exec -T postgres psql -U ci_user -d ci_db -tAc 'SELECT COUNT(*) >= 7 FROM predictions;')" = "t"
           docker compose --env-file .env.ci.example -f compose.yaml -f compose.ci.yaml exec -T postgres psql -U ci_user -d ci_db -tAc 'SELECT version_num FROM alembic_version;' | grep -Eq '^[0-9a-f_]+$'
       - name: Collect failed stack diagnostics
         if: failure()
         shell: bash
         run: |
           docker compose --env-file .env.ci.example -f compose.yaml -f compose.ci.yaml ps --all || true
-          docker compose --env-file .env.ci.example -f compose.yaml -f compose.ci.yaml logs --no-color --tail 250 || true
+          docker compose --env-file .env.ci.example -f compose.yaml -f compose.ci.yaml logs --no-color --tail 250 api monitoring-worker prometheus grafana || true
       - name: Stop disposable stack
         if: always()
         shell: bash
