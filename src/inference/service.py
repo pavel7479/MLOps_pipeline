@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from time import perf_counter
 from uuid import UUID
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -18,6 +19,9 @@ from src.database import (
 
 from .feature_validator import FeatureValidator
 from .model_provider import LoadedModel
+
+if TYPE_CHECKING:
+    from src.monitoring.metrics import ApplicationMetrics
 
 VALID_PREDICTIONS = {"BUY", "HOLD", "SELL"}
 
@@ -67,10 +71,12 @@ class PredictionService:
         loaded_model: LoadedModel,
         repository: PredictionRepository,
         validator: FeatureValidator,
+        metrics: ApplicationMetrics | None = None,
     ) -> None:
         self.loaded_model = loaded_model
         self.repository = repository
         self.validator = validator
+        self.metrics = metrics
 
     @staticmethod
     def _from_record(
@@ -108,12 +114,23 @@ class PredictionService:
         existing = self.repository.get_by_request_id(request.request_id)
         if existing is not None:
             if existing.request_hash != request_hash:
+                if self.metrics:
+                    self.metrics.record_conflict()
                 raise PredictionConflictError(
                     "request_id already exists with a different payload"
                 )
+            if self.metrics:
+                self.metrics.record_replay()
             return self._from_record(existing, replayed=True)
 
-        values = np.asarray(self.loaded_model.model.predict(frame)).reshape(-1)
+        inference_started = perf_counter()
+        try:
+            values = np.asarray(self.loaded_model.model.predict(frame)).reshape(-1)
+        finally:
+            if self.metrics:
+                self.metrics.observe_inference(
+                    self.loaded_model.version, perf_counter() - inference_started
+                )
         if len(values) != 1:
             raise InvalidModelPredictionError(
                 "Model must return exactly one prediction"
@@ -145,8 +162,18 @@ class PredictionService:
             record = self.repository.create(create)
         except DuplicatePredictionError as exc:
             if exc.record.request_hash != request_hash:
+                if self.metrics:
+                    self.metrics.record_conflict()
                 raise PredictionConflictError(
                     "request_id already exists with a different payload"
                 ) from exc
+            if self.metrics:
+                self.metrics.record_replay()
             return self._from_record(exc.record, replayed=True)
+        except Exception:
+            if self.metrics:
+                self.metrics.record_database_write_failure()
+            raise
+        if self.metrics:
+            self.metrics.record_prediction(prediction, self.loaded_model.version)
         return self._from_record(record, replayed=False)

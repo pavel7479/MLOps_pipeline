@@ -1,0 +1,29 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {"id": 1, "title": "API status", "type": "stat", "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0}, "targets": [{"refId": "A", "expr": "up{job=\"crypto-api\"}"}], "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}}], "thresholds": {"mode": "absolute", "steps": [{"color": "red"}, {"color": "green", "value": 1}]}}, "overrides": []}},
+    {"id": 2, "title": "Worker status", "type": "stat", "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0}, "targets": [{"refId": "A", "expr": "up{job=\"crypto-ml-monitor\"}"}]},
+    {"id": 3, "title": "Database status", "type": "stat", "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0}, "targets": [{"refId": "A", "expr": "crypto_database_reachable"}]},
+    {"id": 4, "title": "MLflow status", "type": "stat", "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0}, "targets": [{"refId": "A", "expr": "crypto_mlflow_reachable"}]},
+    {"id": 5, "title": "Loaded model / version / backtest", "type": "table", "gridPos": {"h": 4, "w": 8, "x": 16, "y": 0}, "targets": [{"refId": "A", "expr": "crypto_loaded_model_info == 1", "instant": true, "format": "table"}]},
+    {"id": 6, "title": "HTTP request rate", "type": "timeseries", "gridPos": {"h": 8, "w": 8, "x": 0, "y": 4}, "targets": [{"refId": "A", "expr": "sum by (route) (rate(crypto_http_requests_total[5m]))", "legendFormat": "{{route}}"}]},
+    {"id": 7, "title": "HTTP total and 5xx", "type": "timeseries", "gridPos": {"h": 8, "w": 8, "x": 8, "y": 4}, "targets": [{"refId": "A", "expr": "sum(crypto_http_requests_total)", "legendFormat": "total"}, {"refId": "B", "expr": "sum(crypto_http_requests_total{status_code=~\"5..\"})", "legendFormat": "5xx"}]},
+    {"id": 8, "title": "HTTP latency p50 / p95 / p99", "type": "timeseries", "gridPos": {"h": 8, "w": 8, "x": 16, "y": 4}, "targets": [{"refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate(crypto_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p50"}, {"refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(crypto_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p95"}, {"refId": "C", "expr": "histogram_quantile(0.99, sum by (le) (rate(crypto_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p99"}]},
+    {"id": 9, "title": "ML inference p95", "type": "timeseries", "gridPos": {"h": 8, "w": 8, "x": 0, "y": 12}, "targets": [{"refId": "A", "expr": "histogram_quantile(0.95, sum by (le, model_version) (rate(crypto_ml_inference_duration_seconds_bucket[5m])))", "legendFormat": "v{{model_version}}"}]},
+    {"id": 10, "title": "Committed predictions", "type": "timeseries", "gridPos": {"h": 8, "w": 8, "x": 8, "y": 12}, "targets": [{"refId": "A", "expr": "sum by (prediction, model_version) (crypto_ml_predictions_total)", "legendFormat": "{{prediction}} v{{model_version}}"}]},
+    {"id": 11, "title": "Replays / conflicts / DB write failures", "type": "timeseries", "gridPos": {"h": 8, "w": 8, "x": 16, "y": 12}, "targets": [{"refId": "A", "expr": "crypto_ml_prediction_replays_total", "legendFormat": "replays"}, {"refId": "B", "expr": "crypto_ml_prediction_conflicts_total", "legendFormat": "conflicts"}, {"refId": "C", "expr": "crypto_database_write_failures_total", "legendFormat": "DB failures"}]}
+  ],
+  "refresh": "15s",
+  "schemaVersion": 41,
+  "tags": ["crypto-ml", "service"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timezone": "browser",
+  "title": "Crypto ML — Service Overview",
+  "uid": "crypto-ml-service-overview",
+  "version": 1
+}

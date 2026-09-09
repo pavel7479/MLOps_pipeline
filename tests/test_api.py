@@ -310,3 +310,37 @@ def test_model_load_failure_aborts_normal_startup(tmp_path) -> None:
         with TestClient(app):
             pass
     database.dispose()
+
+
+def test_metrics_endpoint_is_hidden_and_uses_route_templates(tmp_path) -> None:
+    database = _database()
+    app = create_app(
+        _settings(tmp_path), database=database, model_provider=FakeProvider()
+    )
+    first_id, second_id = uuid4(), uuid4()
+    with TestClient(app) as client:
+        client.get(f"/api/v1/predictions/{first_id}")
+        client.get(f"/api/v1/predictions/{second_id}")
+        metrics = client.get("/metrics")
+        paths = client.get("/openapi.json").json()["paths"]
+    assert metrics.status_code == 200
+    assert "/metrics" not in paths
+    assert 'route="/api/v1/predictions/{request_id}"' in metrics.text
+    assert str(first_id) not in metrics.text and str(second_id) not in metrics.text
+    assert "crypto_loaded_model_info" in metrics.text
+    assert "run-id-1" not in metrics.text
+    database.dispose()
+
+
+def test_metrics_endpoint_remains_available_in_degraded_mode(tmp_path) -> None:
+    database = _database()
+    app = create_app(
+        _settings(tmp_path), database=database, model_provider=FakeProvider(fail=True),
+        database_health_checker=lambda _engine: False,
+        allow_model_load_failure=True,
+    )
+    with TestClient(app) as client:
+        response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "crypto_model_loaded 0.0" in response.text
+    database.dispose()

@@ -193,6 +193,24 @@ docker compose --env-file .env.docker restart api
 docker compose --env-file .env.docker restart postgres
 ~~~
 
+## Дополнение Блока 10: monitoring plane
+
+Compose также запускает `monitoring-worker`, `prometheus` и `grafana`. API от них не зависит: остановка monitoring plane не блокирует inference. Worker использует тот же non-root runtime image, читает PostgreSQL ограниченным `LIMIT 500` и не публикует `9101` на Windows. Prometheus и Grafana используют точные образы `prom/prometheus:v3.14.0` и `grafana/grafana:13.2.1`.
+
+Доступ с host: Prometheus — `http://127.0.0.1:9090`, Grafana — `http://127.0.0.1:3000`. Порты можно заменить через `PROMETHEUS_HOST_PORT` и `GRAFANA_HOST_PORT`; внутренние адреса `prometheus:9090` и `grafana:3000` не меняются. Credentials Grafana задаются только в `.env.docker`.
+
+Named volumes `postgres_data`, `prometheus_data`, `grafana_data` в стандартном Compose project `crypto-ml-platform` получают фактические имена `crypto-ml-platform_postgres_data`, `crypto-ml-platform_prometheus_data`, `crypto-ml-platform_grafana_data`. Обычный `down` их сохраняет; `down -v` удаляет все три. MLflow state по-прежнему хранится в `data/mlflow` и `mlartifacts`.
+
+Проверки конфигурации и полного monitoring chain:
+
+~~~powershell
+docker compose --env-file .env.docker exec prometheus promtool check config /etc/prometheus/prometheus.yml
+docker compose --env-file .env.docker exec prometheus promtool check rules /etc/prometheus/rules.yml
+docker compose --env-file .env.docker --profile test run --rm integration-tests
+~~~
+
+Полная схема и эксплуатация описаны в [architecture.md](architecture.md), [monitoring.md](monitoring.md) и [runbook.md](runbook.md).
+
 Безопасно остановить систему, сохранив данные:
 
 ~~~powershell

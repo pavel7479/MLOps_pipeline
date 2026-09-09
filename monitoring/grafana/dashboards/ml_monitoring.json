@@ -1,0 +1,28 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {"id": 1, "title": "Loaded model version", "type": "table", "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}, "targets": [{"refId": "A", "expr": "crypto_loaded_model_info == 1", "instant": true, "format": "table"}]},
+    {"id": 2, "title": "Monitoring samples", "type": "stat", "gridPos": {"h": 4, "w": 4, "x": 6, "y": 0}, "targets": [{"refId": "A", "expr": "crypto_monitoring_window_samples"}]},
+    {"id": 3, "title": "Drift available / insufficient", "type": "stat", "gridPos": {"h": 4, "w": 4, "x": 10, "y": 0}, "targets": [{"refId": "A", "expr": "crypto_feature_drift_available"}]},
+    {"id": 4, "title": "Warning features", "type": "stat", "gridPos": {"h": 4, "w": 3, "x": 14, "y": 0}, "targets": [{"refId": "A", "expr": "crypto_drift_warning_features"}]},
+    {"id": 5, "title": "Critical features", "type": "stat", "gridPos": {"h": 4, "w": 3, "x": 17, "y": 0}, "targets": [{"refId": "A", "expr": "crypto_drift_critical_features"}]},
+    {"id": 6, "title": "Last drift calculation", "type": "stat", "gridPos": {"h": 4, "w": 4, "x": 20, "y": 0}, "targets": [{"refId": "A", "expr": "crypto_last_drift_check_timestamp_seconds"}], "fieldConfig": {"defaults": {"unit": "dateTimeAsIso"}, "overrides": []}},
+    {"id": 7, "title": "Recent prediction shares", "type": "timeseries", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4}, "targets": [{"refId": "A", "expr": "crypto_recent_prediction_share", "legendFormat": "{{prediction}}"}], "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}, "overrides": []}},
+    {"id": 8, "title": "Feature PSI — all 28", "type": "table", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4}, "targets": [{"refId": "A", "expr": "crypto_feature_drift_score", "instant": true, "format": "table"}]},
+    {"id": 9, "title": "Top 5 feature PSI", "type": "bargauge", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12}, "targets": [{"refId": "A", "expr": "topk(5, crypto_feature_drift_score)", "legendFormat": "{{feature}}"}], "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green"}, {"color": "yellow", "value": 0.1}, {"color": "red", "value": 0.25}]}}, "overrides": []}},
+    {"id": 10, "title": "Feature PSI over time", "type": "timeseries", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12}, "targets": [{"refId": "A", "expr": "crypto_feature_drift_score", "legendFormat": "{{feature}}"}]}
+  ],
+  "refresh": "15s",
+  "schemaVersion": 41,
+  "tags": ["crypto-ml", "drift", "psi"],
+  "templating": {"list": []},
+  "time": {"from": "now-24h", "to": "now"},
+  "timezone": "browser",
+  "title": "Crypto ML — Model Monitoring",
+  "uid": "crypto-ml-model-monitoring",
+  "version": 1
+}

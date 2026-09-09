@@ -45,4 +45,5 @@ def get_prediction_service(
         loaded_model=loaded_model,
         repository=repository,
         validator=request.app.state.feature_validator,
+        metrics=request.app.state.metrics,
     )

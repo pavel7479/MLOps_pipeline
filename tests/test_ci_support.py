@@ -33,6 +33,9 @@ def _ready_rows() -> list[dict[str, str | int]]:
         {"Service": "postgres", "State": "running", "Health": "healthy"},
         {"Service": "mlflow", "State": "running", "Health": "healthy"},
         {"Service": "api", "State": "running", "Health": "healthy"},
+        {"Service": "monitoring-worker", "State": "running", "Health": "healthy"},
+        {"Service": "prometheus", "State": "running", "Health": "healthy"},
+        {"Service": "grafana", "State": "running", "Health": "healthy"},
         {"Service": "migrate", "State": "exited", "ExitCode": 0},
         {"Service": "mlflow-init", "State": "exited", "ExitCode": 0},
     ]
@@ -112,7 +115,10 @@ def test_wait_for_compose_has_bounded_timeout() -> None:
             sleep=lambda _seconds: None,
             report=reports.append,
         )
-    assert reports == ["waiting for services: postgres, mlflow, api, migrate, mlflow-init"]
+    assert reports == [
+        "waiting for services: postgres, mlflow, api, monitoring-worker, "
+        "prometheus, grafana, migrate, mlflow-init"
+    ]
 
 
 def test_smoke_payload_uses_versioned_fixture_without_parquet(

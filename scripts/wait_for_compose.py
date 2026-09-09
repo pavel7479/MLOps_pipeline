@@ -10,7 +10,9 @@ import subprocess
 import time
 from typing import Any
 
-LONG_RUNNING = ("postgres", "mlflow", "api")
+LONG_RUNNING = (
+    "postgres", "mlflow", "api", "monitoring-worker", "prometheus", "grafana"
+)
 ONE_SHOT = ("migrate", "mlflow-init")
 
 

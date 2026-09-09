@@ -1,5 +1,7 @@
 # Crypto ML Platform — локальный MLOps pipeline
 
+[![CI](https://github.com/pavel7479/MLOps_pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/pavel7479/MLOps_pipeline/actions/workflows/ci.yml)
+
 Учебный production-oriented ML-проект по прогнозированию движения криптовалютного рынка: от загрузки OHLCV и feature engineering до временной валидации, backtesting, MLflow Model Registry и локального FastAPI inference API с PostgreSQL.
 
 ## Требования и установка
@@ -251,3 +253,34 @@ CI использует ровно 28 версионированных fixture-�
 Полная схема pipeline, локальные команды, фактические job names для branch
 ruleset, permissions, immutable digest, rollback и граница будущего production
 deployment описаны в [docs/ci_cd.md](docs/ci_cd.md).
+
+## Блок 10 — Monitoring, Prometheus, Grafana и ML Drift
+
+Проект завершает локальный путь от OHLCV и causal feature engineering до API, хранения прогнозов, container delivery и наблюдаемости. FastAPI отдаёт bounded-cardinality метрики на `http://127.0.0.1:8000/metrics`; отдельный worker читает последние 500 prediction rows и сравнивает 28 входных признаков с Train-only PSI reference. Prometheus 3.14.0 хранит историю 7 дней и вычисляет восемь alert rules, Grafana 13.2.1 автоматически поднимает datasource и два dashboard.
+
+Быстрый запуск из корня проекта:
+
+```powershell
+Copy-Item .env.docker.example .env.docker
+# Замените оба CHANGE_ME пароля в .env.docker.
+docker compose --env-file .env.docker config
+docker compose --env-file .env.docker build
+docker compose --env-file .env.docker up -d
+docker compose --env-file .env.docker ps --all
+```
+
+Интерфейсы: Swagger — `http://127.0.0.1:8000/docs`, MLflow — `http://127.0.0.1:5000`, Prometheus — `http://127.0.0.1:9090`, Grafana — `http://127.0.0.1:3000`. Логин Grafana берётся из `.env.docker`. PostgreSQL и worker port 9101 доступны только внутри Compose network.
+
+Проверки:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -v
+docker compose --env-file .env.docker --profile test run --rm unit-tests
+docker compose --env-file .env.docker --profile test run --rm integration-tests
+```
+
+Набор содержит более 130 Python tests; GitHub Actions дополнительно проверяет Linux runtime/test images, Compose health, `promtool`, API→worker→Prometheus→Grafana и публикует только прошедший CI immutable GHCR image.
+
+Важно: лучший сохранённый backtest имеет доходность **-50.349%** и статус **`failed_profitability_check`**. Проект не утверждает прибыльность и не выполняет реальную торговлю. Drift не равен плохой модели, отсутствие drift не равно точности; live F1, Alertmanager/внешние уведомления, auto-retraining/promotion, remote deployment и Kubernetes не входят в этот этап.
+
+Документация: [monitoring](docs/monitoring.md), [архитектура](docs/architecture.md), [runbook](docs/runbook.md), [Docker](docs/docker.md), [CI/CD](docs/ci_cd.md).

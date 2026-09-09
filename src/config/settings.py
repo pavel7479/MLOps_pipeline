@@ -230,6 +230,20 @@ class DatabaseSettings:
     pool_pre_ping: bool = True
 
 
+@dataclass(frozen=True)
+class MonitoringSettings:
+    """Local Prometheus worker and drift thresholds."""
+
+    reference_path: Path = Path("monitoring/reference/BTCUSDT_1h_train_reference.json")
+    window_size: int = 500
+    min_samples: int = 100
+    poll_interval_seconds: float = 60.0
+    metrics_host: str = "0.0.0.0"
+    metrics_port: int = 9101
+    warning_threshold: float = 0.10
+    critical_threshold: float = 0.25
+
+
 
 
 @dataclass(frozen=True)
@@ -252,6 +266,7 @@ class AppSettings:
     api: APISettings = APISettings()
     inference: InferenceSettings = InferenceSettings()
     database: DatabaseSettings = DatabaseSettings()
+    monitoring: MonitoringSettings = MonitoringSettings()
 
 
 def _required(mapping: dict[str, Any], key: str, section: str) -> Any:
@@ -564,6 +579,55 @@ def load_settings(path: str | Path = "config.yaml") -> AppSettings:
     if not database.url_env_variable:
         raise ConfigurationError("database.url_env_variable cannot be empty")
 
+    monitoring_raw = raw.get("monitoring", {})
+    monitoring_defaults = MonitoringSettings()
+    monitoring = MonitoringSettings(
+        reference_path=(base / os.getenv(
+            "MONITORING_REFERENCE_PATH",
+            str(monitoring_raw.get("reference_path", monitoring_defaults.reference_path)),
+        )).resolve(),
+        window_size=int(os.getenv(
+            "MONITORING_WINDOW_SIZE",
+            monitoring_raw.get("window_size", monitoring_defaults.window_size),
+        )),
+        min_samples=int(os.getenv(
+            "MONITORING_MIN_SAMPLES",
+            monitoring_raw.get("min_samples", monitoring_defaults.min_samples),
+        )),
+        poll_interval_seconds=float(os.getenv(
+            "MONITORING_POLL_INTERVAL_SECONDS",
+            monitoring_raw.get(
+                "poll_interval_seconds", monitoring_defaults.poll_interval_seconds
+            ),
+        )),
+        metrics_host=str(os.getenv(
+            "MONITORING_METRICS_HOST",
+            monitoring_raw.get("metrics_host", monitoring_defaults.metrics_host),
+        )).strip(),
+        metrics_port=int(os.getenv(
+            "MONITORING_METRICS_PORT",
+            monitoring_raw.get("metrics_port", monitoring_defaults.metrics_port),
+        )),
+        warning_threshold=float(monitoring_raw.get(
+            "warning_threshold", monitoring_defaults.warning_threshold
+        )),
+        critical_threshold=float(monitoring_raw.get(
+            "critical_threshold", monitoring_defaults.critical_threshold
+        )),
+    )
+    if monitoring.window_size <= 0 or monitoring.min_samples <= 0:
+        raise ConfigurationError("monitoring window_size and min_samples must be positive")
+    if monitoring.min_samples > monitoring.window_size:
+        raise ConfigurationError("monitoring.min_samples cannot exceed window_size")
+    if monitoring.poll_interval_seconds <= 0:
+        raise ConfigurationError("monitoring.poll_interval_seconds must be positive")
+    if not 1 <= monitoring.metrics_port <= 65535 or not monitoring.metrics_host:
+        raise ConfigurationError("monitoring metrics endpoint is invalid")
+    if not 0 < monitoring.warning_threshold < monitoring.critical_threshold:
+        raise ConfigurationError(
+            "monitoring thresholds must satisfy 0 < warning < critical"
+        )
+
 
     return AppSettings(
         market_data=MarketDataSettings(
@@ -598,4 +662,5 @@ def load_settings(path: str | Path = "config.yaml") -> AppSettings:
         api=api,
         inference=inference,
         database=database,
+        monitoring=monitoring,
     )

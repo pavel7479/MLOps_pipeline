@@ -4,6 +4,7 @@ from .settings import (
     DatabaseSettings,
     InferenceSettings,
     MLflowSettings,
+    MonitoringSettings,
     load_settings,
 )
 
@@ -13,5 +14,6 @@ __all__ = [
     "DatabaseSettings",
     "InferenceSettings",
     "MLflowSettings",
+    "MonitoringSettings",
     "load_settings",
 ]

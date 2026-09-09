@@ -70,7 +70,7 @@ services:
     logging: *default-logging
 
   migrate:
-    image: crypto-ml-api:stage8
+    image: crypto-ml-api:stage10
     build:
       context: .
       target: runtime
@@ -87,7 +87,7 @@ services:
     logging: *default-logging
 
   mlflow-init:
-    image: crypto-ml-api:stage8
+    image: crypto-ml-api:stage10
     build:
       context: .
       target: runtime
@@ -117,7 +117,7 @@ services:
     logging: *default-logging
 
   api:
-    image: crypto-ml-api:stage8
+    image: crypto-ml-api:stage10
     build:
       context: .
       target: runtime
@@ -151,8 +151,99 @@ services:
       - no-new-privileges:true
     logging: *default-logging
 
+  monitoring-worker:
+    image: crypto-ml-api:stage10
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    command: ["python", "-m", "src.monitoring.worker"]
+    environment:
+      <<: *application-environment
+      MONITORING_METRICS_HOST: "0.0.0.0"
+      MONITORING_METRICS_PORT: "9101"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9101/metrics', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    networks:
+      - mlops_network
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    ports:
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      api:
+        condition: service_healthy
+      monitoring-worker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9090/-/healthy"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    networks:
+      - mlops_network
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  grafana:
+    image: grafana/grafana:13.2.1
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env.docker}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "127.0.0.1:${GRAFANA_HOST_PORT:-3000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/api/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+    networks:
+      - mlops_network
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
   unit-tests:
-    image: crypto-ml-api-test:stage8
+    image: crypto-ml-api-test:stage10
     build:
       context: .
       target: test
@@ -166,21 +257,32 @@ services:
     logging: *default-logging
 
   integration-tests:
-    image: crypto-ml-api-test:stage8
+    image: crypto-ml-api-test:stage10
     build:
       context: .
       target: test
-    command: ["python", "scripts/smoke_test_api.py"]
+    command:
+      - sh
+      - -ec
+      - python scripts/smoke_test_api.py && python scripts/smoke_test_monitoring.py
     environment:
       API_BASE_URL: "http://api:8000"
       INFERENCE_SAMPLE_PATH: "/testdata/inference_sample.json"
       FEATURE_MANIFEST_PATH: "/testdata/feature_manifest.json"
       MLFLOW_TRACKING_URI: "http://mlflow:5000"
+      PROMETHEUS_BASE_URL: "http://prometheus:9090"
+      GRAFANA_BASE_URL: "http://grafana:3000"
+      GRAFANA_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GRAFANA_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env.docker}"
     volumes:
       - ./tests/fixtures/inference_sample.json:/testdata/inference_sample.json:ro
       - ./tests/fixtures/feature_manifest.json:/testdata/feature_manifest.json:ro
     depends_on:
       api:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+      grafana:
         condition: service_healthy
     profiles:
       - test
@@ -196,3 +298,5 @@ networks:
 
 volumes:
   postgres_data:
+  prometheus_data:
+  grafana_data:

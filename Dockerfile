@@ -39,6 +39,7 @@ COPY --chown=appuser:appuser src ./src
 COPY --chown=appuser:appuser config.yaml alembic.ini ./
 COPY --chown=appuser:appuser alembic ./alembic
 COPY --chown=appuser:appuser scripts/init_mlflow_registry.py ./scripts/init_mlflow_registry.py
+COPY --chown=appuser:appuser monitoring/reference ./monitoring/reference
 
 USER appuser
 
@@ -57,8 +58,11 @@ RUN --mount=type=bind,from=test-builder,source=/test-wheels,target=/test-wheels 
 
 COPY --chown=appuser:appuser tests ./tests
 COPY --chown=appuser:appuser .github ./.github
+COPY --chown=appuser:appuser monitoring ./monitoring
 COPY --chown=appuser:appuser .env.ci.example compose.ci.yaml ./
 COPY --chown=appuser:appuser scripts/smoke_test_api.py \
+    scripts/smoke_test_monitoring.py \
+    scripts/build_monitoring_reference.py \
     scripts/create_ci_bootstrap_artifacts.py \
     scripts/wait_for_compose.py \
     ./scripts/
