@@ -31,6 +31,18 @@ def _prometheus_query(client: httpx.Client, query: str) -> list[dict]:
     return payload["data"]["result"]
 
 
+def _grafana_dashboard(
+    client: httpx.Client,
+    uid: str,
+    auth: tuple[str, str],
+) -> dict:
+    response = client.get(f"{GRAFANA_URL}/api/dashboards/uid/{uid}", auth=auth)
+    response.raise_for_status()
+    payload = response.json()
+    assert payload["meta"]["provisioned"] is True, payload["meta"]
+    return payload["dashboard"]
+
+
 def _wait_for_metrics(client: httpx.Client, timeout: float = 120) -> None:
     deadline = time.monotonic() + timeout
     last_samples = 0.0
@@ -85,7 +97,36 @@ def main() -> int:
             response.raise_for_status()
             assert response.json()["replayed"] is False
         _wait_for_metrics(client)
-        assert _prometheus_query(client, "crypto_feature_drift_available")
+        availability_result = _prometheus_query(
+            client, "crypto_feature_drift_available"
+        )
+        assert availability_result
+        drift_available = float(availability_result[0]["value"][1])
+        gated_psi = _prometheus_query(
+            client,
+            "crypto_feature_drift_score "
+            "and on() (crypto_feature_drift_available == 1)",
+        )
+        assert bool(gated_psi) is bool(drift_available)
+
+        timestamp = _prometheus_query(
+            client,
+            "(crypto_last_drift_check_timestamp_seconds > 0) * 1000",
+        )
+        assert timestamp and float(timestamp[0]["value"][1]) > 1_000_000_000_000
+
+        distribution = _prometheus_query(
+            client,
+            "max by (prediction) (crypto_recent_prediction_share) "
+            'or label_replace(vector(0), "prediction", "BUY", "", ".*") '
+            'or label_replace(vector(0), "prediction", "HOLD", "", ".*") '
+            'or label_replace(vector(0), "prediction", "SELL", "", ".*")',
+        )
+        assert {item["metric"]["prediction"] for item in distribution} == {
+            "BUY",
+            "HOLD",
+            "SELL",
+        }
 
         rules = client.get(f"{PROMETHEUS_URL}/api/v1/rules", params={"type": "alert"})
         rules.raise_for_status()
@@ -120,6 +161,40 @@ def main() -> int:
         assert {
             "crypto-ml-service-overview", "crypto-ml-model-monitoring"
         } <= uids
+        service_dashboard = _grafana_dashboard(
+            client, "crypto-ml-service-overview", auth
+        )
+        model_dashboard = _grafana_dashboard(
+            client, "crypto-ml-model-monitoring", auth
+        )
+        assert service_dashboard["title"] == "Crypto ML — Service Overview"
+        assert model_dashboard["title"] == "Crypto ML — Model Monitoring"
+        service_panels = {
+            panel["title"]: panel for panel in service_dashboard["panels"]
+        }
+        model_panels = {
+            panel["title"]: panel for panel in model_dashboard["panels"]
+        }
+        assert {
+            "SYSTEM STATUS",
+            "TRAFFIC & ERRORS",
+            "LATENCY",
+            "PREDICTIONS",
+            "API STATUS",
+            "CURRENT MODEL",
+        } <= set(service_panels)
+        assert {
+            "MODEL & DATA STATUS",
+            "RECENT PREDICTIONS",
+            "FEATURE DRIFT",
+            "DRIFT HISTORY",
+            "DRIFT STATUS",
+            "FEATURE PSI TABLE",
+        } <= set(model_panels)
+        last_check_query = model_panels["LAST DRIFT CHECK"]["targets"][0]["expr"]
+        assert "* 1000" in last_check_query
+        psi_query = model_panels["FEATURE PSI TABLE"]["targets"][0]["expr"]
+        assert "crypto_feature_drift_available == 1" in psi_query
     print("Monitoring smoke test passed: API, worker, Prometheus, alerts, Grafana.")
     return 0
 
