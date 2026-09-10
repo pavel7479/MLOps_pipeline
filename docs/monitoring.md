@@ -56,6 +56,16 @@ Grafana автоматически получает datasource `http://prometheu
 
 Prometheus содержит восемь локальных правил: недоступность API/worker/PostgreSQL/MLflow, высокий 5xx rate, p95 выше 0.5 s, critical drift и доминирование одного класса. Для rate/latency/class rules задан минимальный traffic/window и выдержка во времени, чтобы единичное событие не создавало ложный сигнал.
 
+## Grafana dashboards
+
+Оба dashboard автоматически provision из JSON в monitoring/grafana/dashboards/; ручной импорт и сохранение через UI не требуются. Стабильные UID — crypto-ml-service-overview и crypto-ml-model-monitoring, refresh — 15 секунд, timezone — браузер пользователя.
+
+Crypto ML — Service Overview организован сверху вниз по секциям SYSTEM STATUS, TRAFFIC & ERRORS, LATENCY и PREDICTIONS. Статусы API/worker показываются как UP/DOWN, PostgreSQL и MLflow — как AVAILABLE/UNAVAILABLE; отдельно видны текущая Registry-модель, total/5xx/error rate, request rate, HTTP и inference latency, BUY/HOLD/SELL, replay, conflict и DB write failures.
+
+Crypto ML — Model Monitoring содержит секции MODEL & DATA STATUS, RECENT PREDICTIONS, FEATURE DRIFT и DRIFT HISTORY. DRIFT STATUS = READY означает только достаточный объём данных для PSI. Пока данных меньше минимума, warning/critical и все PSI-панели показывают NOT CALCULATED/NO DATA, а не ложный PSI=0. LAST DRIFT CHECK переводит Unix seconds в миллисекунды для корректного datetime; selector Feature фильтрует PSI history по label из Prometheus.
+
+Если один из классов ещё не встречался, current distribution создаёт нулевую BUY/HOLD/SELL series на уровне PromQL, не изменяя backend metrics. Полные графики истории показывают только фактически опубликованные Prometheus series.
+
 ## Границы этапа
 
 Monitoring локальный. Здесь нет Alertmanager, email/Telegram/PagerDuty, Loki/ELK, OpenTelemetry, live Binance ingestion, live ground truth/F1, автоматического retraining/promotion, Kubernetes, cloud deployment и реальной торговли.

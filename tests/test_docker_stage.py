@@ -62,6 +62,10 @@ def test_compose_uses_pinned_internal_services_and_ordering() -> None:
     assert {"postgres", "mlflow", "migrate", "mlflow-init", "api"} <= set(services)
     assert services["postgres"]["image"] == "postgres:17.11"
     assert services["mlflow"]["image"] == "ghcr.io/mlflow/mlflow:v3.16.0"
+    mlflow_command = services["mlflow"]["command"]
+    allowed_hosts = mlflow_command[mlflow_command.index("--allowed-hosts") + 1]
+    assert "localhost:${MLFLOW_HOST_PORT:-5000}" in allowed_hosts
+    assert "127.0.0.1:${MLFLOW_HOST_PORT:-5000}" in allowed_hosts
     assert "ports" not in services["postgres"]
     assert "@postgres:5432/" in services["api"]["environment"]["DATABASE_URL"]
     assert (

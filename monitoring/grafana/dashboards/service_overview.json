@@ -5,17 +5,207 @@
   "id": null,
   "links": [],
   "panels": [
-    {"id": 1, "title": "API status", "type": "stat", "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0}, "targets": [{"refId": "A", "expr": "up{job=\"crypto-api\"}"}], "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}}], "thresholds": {"mode": "absolute", "steps": [{"color": "red"}, {"color": "green", "value": 1}]}}, "overrides": []}},
-    {"id": 2, "title": "Worker status", "type": "stat", "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0}, "targets": [{"refId": "A", "expr": "up{job=\"crypto-ml-monitor\"}"}]},
-    {"id": 3, "title": "Database status", "type": "stat", "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0}, "targets": [{"refId": "A", "expr": "crypto_database_reachable"}]},
-    {"id": 4, "title": "MLflow status", "type": "stat", "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0}, "targets": [{"refId": "A", "expr": "crypto_mlflow_reachable"}]},
-    {"id": 5, "title": "Loaded model / version / backtest", "type": "table", "gridPos": {"h": 4, "w": 8, "x": 16, "y": 0}, "targets": [{"refId": "A", "expr": "crypto_loaded_model_info == 1", "instant": true, "format": "table"}]},
-    {"id": 6, "title": "HTTP request rate", "type": "timeseries", "gridPos": {"h": 8, "w": 8, "x": 0, "y": 4}, "targets": [{"refId": "A", "expr": "sum by (route) (rate(crypto_http_requests_total[5m]))", "legendFormat": "{{route}}"}]},
-    {"id": 7, "title": "HTTP total and 5xx", "type": "timeseries", "gridPos": {"h": 8, "w": 8, "x": 8, "y": 4}, "targets": [{"refId": "A", "expr": "sum(crypto_http_requests_total)", "legendFormat": "total"}, {"refId": "B", "expr": "sum(crypto_http_requests_total{status_code=~\"5..\"})", "legendFormat": "5xx"}]},
-    {"id": 8, "title": "HTTP latency p50 / p95 / p99", "type": "timeseries", "gridPos": {"h": 8, "w": 8, "x": 16, "y": 4}, "targets": [{"refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate(crypto_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p50"}, {"refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(crypto_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p95"}, {"refId": "C", "expr": "histogram_quantile(0.99, sum by (le) (rate(crypto_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p99"}]},
-    {"id": 9, "title": "ML inference p95", "type": "timeseries", "gridPos": {"h": 8, "w": 8, "x": 0, "y": 12}, "targets": [{"refId": "A", "expr": "histogram_quantile(0.95, sum by (le, model_version) (rate(crypto_ml_inference_duration_seconds_bucket[5m])))", "legendFormat": "v{{model_version}}"}]},
-    {"id": 10, "title": "Committed predictions", "type": "timeseries", "gridPos": {"h": 8, "w": 8, "x": 8, "y": 12}, "targets": [{"refId": "A", "expr": "sum by (prediction, model_version) (crypto_ml_predictions_total)", "legendFormat": "{{prediction}} v{{model_version}}"}]},
-    {"id": 11, "title": "Replays / conflicts / DB write failures", "type": "timeseries", "gridPos": {"h": 8, "w": 8, "x": 16, "y": 12}, "targets": [{"refId": "A", "expr": "crypto_ml_prediction_replays_total", "legendFormat": "replays"}, {"refId": "B", "expr": "crypto_ml_prediction_conflicts_total", "legendFormat": "conflicts"}, {"refId": "C", "expr": "crypto_database_write_failures_total", "legendFormat": "DB failures"}]}
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}, "id": 100, "panels": [], "title": "SYSTEM STATUS", "type": "row"},
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Prometheus can currently scrape the FastAPI metrics endpoint.",
+      "fieldConfig": {"defaults": {"mappings": [{"options": {"0": {"color": "red", "text": "DOWN"}, "1": {"color": "green", "text": "UP"}}, "type": "value"}], "noValue": "NO DATA", "thresholds": {"mode": "absolute", "steps": [{"color": "red"}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 1},
+      "id": 1,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "up{job=\"crypto-api\"}", "instant": true, "refId": "A"}],
+      "title": "API STATUS",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Prometheus can currently scrape the feature-drift monitoring worker.",
+      "fieldConfig": {"defaults": {"mappings": [{"options": {"0": {"color": "red", "text": "DOWN"}, "1": {"color": "green", "text": "UP"}}, "type": "value"}], "noValue": "NO DATA", "thresholds": {"mode": "absolute", "steps": [{"color": "red"}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 1},
+      "id": 2,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "up{job=\"crypto-ml-monitor\"}", "instant": true, "refId": "A"}],
+      "title": "WORKER STATUS",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Whether the monitoring worker can read recent committed predictions from PostgreSQL.",
+      "fieldConfig": {"defaults": {"mappings": [{"options": {"0": {"color": "red", "text": "UNAVAILABLE"}, "1": {"color": "green", "text": "AVAILABLE"}}, "type": "value"}], "noValue": "NO DATA", "thresholds": {"mode": "absolute", "steps": [{"color": "red"}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 1},
+      "id": 3,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "crypto_database_reachable", "instant": true, "refId": "A"}],
+      "title": "POSTGRESQL",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Whether the monitoring worker can reach the configured MLflow Tracking Server.",
+      "fieldConfig": {"defaults": {"mappings": [{"options": {"0": {"color": "red", "text": "UNAVAILABLE"}, "1": {"color": "green", "text": "AVAILABLE"}}, "type": "value"}], "noValue": "NO DATA", "thresholds": {"mode": "absolute", "steps": [{"color": "red"}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+      "id": 4,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "crypto_mlflow_reachable", "instant": true, "refId": "A"}],
+      "title": "MLFLOW",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Current MLflow Registry model loaded by the inference API. Backtest status describes profitability validation and does not indicate API/model availability.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Backtest status"},
+            "properties": [
+              {"id": "mappings", "value": [{"options": {"failed_profitability_check": {"color": "red", "text": "Backtest: FAILED PROFITABILITY CHECK"}}, "type": "value"}]},
+              {"id": "custom.cellOptions", "value": {"type": "color-background"}}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 5},
+      "id": 5,
+      "options": {"cellHeight": "sm", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "crypto_loaded_model_info == 1", "format": "table", "instant": true, "refId": "A"}],
+      "title": "CURRENT MODEL",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {"Time": true, "Value": true, "__name__": true, "instance": true, "job": true},
+            "indexByName": {"registered_model": 0, "alias": 1, "version": 2, "backtest_status": 3},
+            "renameByName": {"alias": "Alias", "backtest_status": "Backtest status", "registered_model": "Registered model", "version": "Version"}
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 10}, "id": 101, "panels": [], "title": "TRAFFIC & ERRORS", "type": "row"},
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Total HTTP requests observed by this API process since it started. NO REQUESTS means the counter is currently zero.",
+      "fieldConfig": {"defaults": {"decimals": 0, "mappings": [{"options": {"0": {"color": "gray", "text": "NO REQUESTS"}}, "type": "value"}], "noValue": "NO REQUESTS", "thresholds": {"mode": "absolute", "steps": [{"color": "green"}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 11},
+      "id": 7,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "sum(crypto_http_requests_total) or vector(0)", "instant": true, "refId": "A"}],
+      "title": "TOTAL REQUESTS",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Total server-side HTTP 5xx responses observed since the API process started.",
+      "fieldConfig": {"defaults": {"decimals": 0, "mappings": [{"options": {"0": {"color": "green", "text": "0"}}, "type": "value"}], "noValue": "0", "thresholds": {"mode": "absolute", "steps": [{"color": "green"}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 11},
+      "id": 12,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "sum(crypto_http_requests_total{status_code=~\"5..\"}) or vector(0)", "instant": true, "refId": "A"}],
+      "title": "5XX ERRORS",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Share of HTTP requests returning a 5xx response during the last five minutes. Zero traffic is displayed as 0%, never NaN.",
+      "fieldConfig": {"defaults": {"decimals": 2, "max": 1, "min": 0, "noValue": "NO REQUESTS", "thresholds": {"mode": "absolute", "steps": [{"color": "green"}, {"color": "yellow", "value": 0.01}, {"color": "red", "value": 0.05}]}, "unit": "percentunit"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 11},
+      "id": 13,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "(sum(rate(crypto_http_requests_total{status_code=~\"5..\"}[5m])) / clamp_min(sum(rate(crypto_http_requests_total[5m])), 0.000000001)) or vector(0)", "instant": true, "refId": "A"}],
+      "title": "HTTP ERROR RATE",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Per-route API request throughput measured in requests per second over a five-minute window.",
+      "fieldConfig": {"defaults": {"noValue": "NO REQUESTS", "unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 15},
+      "id": 6,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"hideZeros": false, "mode": "multi", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "sum by (route) (rate(crypto_http_requests_total[5m]))", "legendFormat": "{{route}}", "refId": "A"}],
+      "title": "API REQUEST RATE",
+      "type": "timeseries"
+    },
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 23}, "id": 102, "panels": [], "title": "LATENCY", "type": "row"},
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "End-to-end FastAPI response time. p95 means approximately 95% of requests completed at or below this response time.",
+      "fieldConfig": {"defaults": {"noValue": "NO REQUESTS", "unit": "s"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 16, "x": 0, "y": 24},
+      "id": 8,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"hideZeros": false, "mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "histogram_quantile(0.50, sum by (le) (rate(crypto_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p50", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "histogram_quantile(0.95, sum by (le) (rate(crypto_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p95", "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "histogram_quantile(0.99, sum by (le) (rate(crypto_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p99", "refId": "C"}
+      ],
+      "title": "HTTP LATENCY",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Time spent performing model inference only, excluding most API and database overhead.",
+      "fieldConfig": {"defaults": {"noValue": "NO PREDICTIONS", "unit": "s"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 24},
+      "id": 9,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"hideZeros": false, "mode": "multi", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "histogram_quantile(0.95, sum by (le, model_version) (rate(crypto_ml_inference_duration_seconds_bucket[5m])))", "legendFormat": "v{{model_version}}", "refId": "A"}],
+      "title": "ML INFERENCE P95",
+      "type": "timeseries"
+    },
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 32}, "id": 103, "panels": [], "title": "PREDICTIONS", "type": "row"},
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Predictions successfully committed to PostgreSQL since the API process started. Synthetic zero-valued PromQL series keep BUY, HOLD and SELL visible before their first event.",
+      "fieldConfig": {
+        "defaults": {"decimals": 0, "min": 0, "noValue": "NO PREDICTIONS", "thresholds": {"mode": "absolute", "steps": [{"color": "green"}]}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "BUY"}, "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "HOLD"}, "properties": [{"id": "color", "value": {"fixedColor": "gray", "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "SELL"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}
+        ]
+      },
+      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 33},
+      "id": 10,
+      "options": {"displayMode": "basic", "legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": false}, "maxVizHeight": 300, "minVizHeight": 16, "minVizWidth": 8, "namePlacement": "left", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true, "sizing": "auto", "text": {}, "valueMode": "color"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "sum by (prediction) (crypto_ml_predictions_total) or label_replace(vector(0), \"prediction\", \"BUY\", \"\", \".*\") or label_replace(vector(0), \"prediction\", \"HOLD\", \"\", \".*\") or label_replace(vector(0), \"prediction\", \"SELL\", \"\", \".*\")", "instant": true, "legendFormat": "{{prediction}}", "refId": "A"}],
+      "title": "COMMITTED PREDICTIONS",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Requests replayed from the idempotency store without running model inference again.",
+      "fieldConfig": {"defaults": {"decimals": 0, "noValue": "0", "thresholds": {"mode": "absolute", "steps": [{"color": "green"}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 40},
+      "id": 14,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "sum(crypto_ml_prediction_replays_total) or vector(0)", "instant": true, "refId": "A"}],
+      "title": "REPLAYS",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "HTTP 409 responses caused by reusing a request_id with a different payload.",
+      "fieldConfig": {"defaults": {"decimals": 0, "noValue": "0", "thresholds": {"mode": "absolute", "steps": [{"color": "green"}, {"color": "yellow", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 40},
+      "id": 15,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "sum(crypto_ml_prediction_conflicts_total) or vector(0)", "instant": true, "refId": "A"}],
+      "title": "CONFLICTS (409)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Prediction database transactions that failed before a successful commit.",
+      "fieldConfig": {"defaults": {"decimals": 0, "noValue": "0", "thresholds": {"mode": "absolute", "steps": [{"color": "green"}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 40},
+      "id": 16,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "sum(crypto_database_write_failures_total) or vector(0)", "instant": true, "refId": "A"}],
+      "title": "DB WRITE FAILURES",
+      "type": "stat"
+    }
   ],
   "refresh": "15s",
   "schemaVersion": 41,
@@ -25,5 +215,5 @@
   "timezone": "browser",
   "title": "Crypto ML — Service Overview",
   "uid": "crypto-ml-service-overview",
-  "version": 1
+  "version": 2
 }

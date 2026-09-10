@@ -5,24 +5,217 @@
   "id": null,
   "links": [],
   "panels": [
-    {"id": 1, "title": "Loaded model version", "type": "table", "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}, "targets": [{"refId": "A", "expr": "crypto_loaded_model_info == 1", "instant": true, "format": "table"}]},
-    {"id": 2, "title": "Monitoring samples", "type": "stat", "gridPos": {"h": 4, "w": 4, "x": 6, "y": 0}, "targets": [{"refId": "A", "expr": "crypto_monitoring_window_samples"}]},
-    {"id": 3, "title": "Drift available / insufficient", "type": "stat", "gridPos": {"h": 4, "w": 4, "x": 10, "y": 0}, "targets": [{"refId": "A", "expr": "crypto_feature_drift_available"}]},
-    {"id": 4, "title": "Warning features", "type": "stat", "gridPos": {"h": 4, "w": 3, "x": 14, "y": 0}, "targets": [{"refId": "A", "expr": "crypto_drift_warning_features"}]},
-    {"id": 5, "title": "Critical features", "type": "stat", "gridPos": {"h": 4, "w": 3, "x": 17, "y": 0}, "targets": [{"refId": "A", "expr": "crypto_drift_critical_features"}]},
-    {"id": 6, "title": "Last drift calculation", "type": "stat", "gridPos": {"h": 4, "w": 4, "x": 20, "y": 0}, "targets": [{"refId": "A", "expr": "crypto_last_drift_check_timestamp_seconds"}], "fieldConfig": {"defaults": {"unit": "dateTimeAsIso"}, "overrides": []}},
-    {"id": 7, "title": "Recent prediction shares", "type": "timeseries", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4}, "targets": [{"refId": "A", "expr": "crypto_recent_prediction_share", "legendFormat": "{{prediction}}"}], "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}, "overrides": []}},
-    {"id": 8, "title": "Feature PSI — all 28", "type": "table", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4}, "targets": [{"refId": "A", "expr": "crypto_feature_drift_score", "instant": true, "format": "table"}]},
-    {"id": 9, "title": "Top 5 feature PSI", "type": "bargauge", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12}, "targets": [{"refId": "A", "expr": "topk(5, crypto_feature_drift_score)", "legendFormat": "{{feature}}"}], "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green"}, {"color": "yellow", "value": 0.1}, {"color": "red", "value": 0.25}]}}, "overrides": []}},
-    {"id": 10, "title": "Feature PSI over time", "type": "timeseries", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12}, "targets": [{"refId": "A", "expr": "crypto_feature_drift_score", "legendFormat": "{{feature}}"}]}
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}, "id": 200, "panels": [], "title": "MODEL & DATA STATUS", "type": "row"},
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Current MLflow Registry model loaded by the inference API.",
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"h": 5, "w": 8, "x": 0, "y": 1},
+      "id": 1,
+      "options": {"cellHeight": "sm", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "crypto_loaded_model_info == 1", "format": "table", "instant": true, "refId": "A"}],
+      "title": "LOADED MODEL",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {"Time": true, "Value": true, "__name__": true, "backtest_status": true, "instance": true, "job": true},
+            "indexByName": {"registered_model": 0, "alias": 1, "version": 2},
+            "renameByName": {"alias": "Alias", "registered_model": "Model", "version": "Version"}
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Number of recent committed predictions currently available to the monitoring worker, up to the configured 500-sample window.",
+      "fieldConfig": {"defaults": {"decimals": 0, "min": 0, "noValue": "NO DATA", "thresholds": {"mode": "absolute", "steps": [{"color": "blue"}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 4, "x": 8, "y": 1},
+      "id": 2,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "crypto_monitoring_window_samples", "instant": true, "refId": "A"}],
+      "title": "MONITORING SAMPLES",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "READY means enough recent predictions exist to calculate PSI. It does not mean that drift is absent.",
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{"options": {"0": {"color": "gray", "text": "INSUFFICIENT DATA"}, "1": {"color": "green", "text": "READY"}}, "type": "value"}],
+          "noValue": "NO DATA",
+          "thresholds": {"mode": "absolute", "steps": [{"color": "gray"}, {"color": "green", "value": 1}]}
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 5, "w": 4, "x": 12, "y": 1},
+      "id": 3,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "crypto_feature_drift_available", "instant": true, "refId": "A"}],
+      "title": "DRIFT STATUS",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Time of the latest worker drift cycle, displayed in the browser timezone. NEVER means that no completed cycle has been observed.",
+      "fieldConfig": {"defaults": {"noValue": "NEVER", "unit": "dateTimeAsIso"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 8, "x": 16, "y": 1},
+      "id": 6,
+      "options": {"colorMode": "none", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "(crypto_last_drift_check_timestamp_seconds > 0) * 1000", "instant": true, "refId": "A"}],
+      "title": "LAST DRIFT CHECK",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Number of features with 0.10 ≤ PSI < 0.25. The panel says NOT CALCULATED until enough monitoring data is available.",
+      "fieldConfig": {"defaults": {"decimals": 0, "noValue": "NOT CALCULATED", "thresholds": {"mode": "absolute", "steps": [{"color": "green"}, {"color": "yellow", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 12, "x": 0, "y": 6},
+      "id": 4,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "crypto_drift_warning_features and on() (crypto_feature_drift_available == 1)", "instant": true, "refId": "A"}],
+      "title": "WARNING FEATURES",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Number of features with PSI ≥ 0.25. The panel says NOT CALCULATED until enough monitoring data is available.",
+      "fieldConfig": {"defaults": {"decimals": 0, "noValue": "NOT CALCULATED", "thresholds": {"mode": "absolute", "steps": [{"color": "green"}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 12, "x": 12, "y": 6},
+      "id": 5,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "crypto_drift_critical_features and on() (crypto_feature_drift_available == 1)", "instant": true, "refId": "A"}],
+      "title": "CRITICAL FEATURES",
+      "type": "stat"
+    },
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 10}, "id": 201, "panels": [], "title": "RECENT PREDICTIONS", "type": "row"},
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Current BUY, HOLD and SELL shares in the monitoring window. Synthetic zero-valued PromQL series keep classes visible before their first observation.",
+      "fieldConfig": {
+        "defaults": {"decimals": 1, "max": 1, "min": 0, "noValue": "NO PREDICTIONS", "thresholds": {"mode": "absolute", "steps": [{"color": "green"}]}, "unit": "percentunit"},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "BUY"}, "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "HOLD"}, "properties": [{"id": "color", "value": {"fixedColor": "gray", "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "SELL"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}
+        ]
+      },
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 11},
+      "id": 7,
+      "options": {"displayMode": "basic", "legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": false}, "maxVizHeight": 300, "minVizHeight": 16, "minVizWidth": 8, "namePlacement": "left", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true, "sizing": "auto", "text": {}, "valueMode": "color"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "max by (prediction) (crypto_recent_prediction_share) or label_replace(vector(0), \"prediction\", \"BUY\", \"\", \".*\") or label_replace(vector(0), \"prediction\", \"HOLD\", \"\", \".*\") or label_replace(vector(0), \"prediction\", \"SELL\", \"\", \".*\")", "instant": true, "legendFormat": "{{prediction}}", "refId": "A"}],
+      "title": "CURRENT PREDICTION DISTRIBUTION",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "How BUY, HOLD and SELL shares in the bounded monitoring window change over time.",
+      "fieldConfig": {"defaults": {"max": 1, "min": 0, "noValue": "NO PREDICTIONS", "unit": "percentunit"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 11},
+      "id": 8,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"hideZeros": false, "mode": "multi", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "crypto_recent_prediction_share", "legendFormat": "{{prediction}}", "refId": "A"}],
+      "title": "PREDICTION SHARE OVER TIME",
+      "type": "timeseries"
+    },
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 18}, "id": 202, "panels": [], "title": "FEATURE DRIFT", "type": "row"},
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Five features with the highest current PSI. No values are shown until drift calculation is READY.",
+      "fieldConfig": {"defaults": {"decimals": 3, "min": 0, "noValue": "NO DATA", "thresholds": {"mode": "absolute", "steps": [{"color": "green"}, {"color": "yellow", "value": 0.1}, {"color": "red", "value": 0.25}]}}, "overrides": []},
+      "gridPos": {"h": 8, "w": 10, "x": 0, "y": 19},
+      "id": 9,
+      "options": {"displayMode": "gradient", "legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": false}, "maxVizHeight": 300, "minVizHeight": 16, "minVizWidth": 8, "namePlacement": "left", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true, "sizing": "auto", "text": {}, "valueMode": "color"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "topk(5, crypto_feature_drift_score and on() (crypto_feature_drift_available == 1))", "instant": true, "legendFormat": "{{feature}}", "refId": "A"}],
+      "title": "TOP 5 DRIFTING FEATURES",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "Current PSI by feature, sorted from highest to lowest. Green < 0.10, warning 0.10–0.25, critical ≥ 0.25; these are project monitoring thresholds, not universal laws.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "PSI"},
+            "properties": [
+              {"id": "decimals", "value": 3},
+              {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green"}, {"color": "yellow", "value": 0.1}, {"color": "red", "value": 0.25}]}},
+              {"id": "custom.cellOptions", "value": {"type": "color-background"}}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"h": 8, "w": 14, "x": 10, "y": 19},
+      "id": 10,
+      "options": {"cellHeight": "sm", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "crypto_feature_drift_score and on() (crypto_feature_drift_available == 1)", "format": "table", "instant": true, "refId": "A"}],
+      "title": "FEATURE PSI TABLE",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {"Time": true, "__name__": true, "instance": true, "job": true},
+            "indexByName": {"feature": 0, "Value": 1},
+            "renameByName": {"Value": "PSI", "feature": "Feature"}
+          }
+        },
+        {"id": "sortBy", "options": {"fields": {}, "sort": [{"desc": true, "field": "PSI"}]}}
+      ],
+      "type": "table"
+    },
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 27}, "id": 203, "panels": [], "title": "DRIFT HISTORY", "type": "row"},
+    {
+      "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+      "description": "PSI history for the selected feature labels. Values are hidden until enough data exists for a valid drift calculation.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 3,
+          "min": 0,
+          "noValue": "NO DATA",
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green"}, {"color": "yellow", "value": 0.1}, {"color": "red", "value": 0.25}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 28},
+      "id": 11,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"hideZeros": false, "mode": "multi", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "crypto-prometheus"}, "expr": "crypto_feature_drift_score{feature=~\"$Feature\"} and on() (crypto_feature_drift_available == 1)", "legendFormat": "{{feature}}", "refId": "A"}],
+      "title": "FEATURE PSI OVER TIME",
+      "type": "timeseries"
+    }
   ],
   "refresh": "15s",
   "schemaVersion": 41,
   "tags": ["crypto-ml", "drift", "psi"],
-  "templating": {"list": []},
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {"selected": true, "text": "All", "value": "$__all"},
+        "datasource": {"type": "prometheus", "uid": "crypto-prometheus"},
+        "definition": "label_values(crypto_feature_drift_score, feature)",
+        "description": "Filter Feature PSI Over Time without changing the monitoring calculation.",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Feature",
+        "multi": true,
+        "name": "Feature",
+        "options": [],
+        "query": {"query": "label_values(crypto_feature_drift_score, feature)", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
   "time": {"from": "now-24h", "to": "now"},
   "timezone": "browser",
   "title": "Crypto ML — Model Monitoring",
   "uid": "crypto-ml-model-monitoring",
-  "version": 1
+  "version": 2
 }

@@ -1,0 +1,1449 @@
+ПОДРОБНОЕ ОПИСАНИЕ ПРОЕКТА MLOPS_PIPELINE
+=========================================
+
+Дата разбора: 09.09.2026
+Разобранная версия: stage_10, commit b22d954ff79472399574a7c7a2ad40a934862a57
+Итоговая версия в GitHub main: merge commit 0d1dd3f700b5f3526ae571283a61c4caee1a4601
+
+
+1. КАК ЧИТАТЬ ЭТОТ ДОКУМЕНТ
+---------------------------
+
+Каждый stage — не отдельная копия приложения, а следующий слой одного проекта. Ветки
+stage_2 ... stage_10 указывают на последовательные контрольные точки истории Git.
+Первый этап находится в ветке master (commit f85bd37), отдельной ветки stage_1 в
+фактическом списке Git нет.
+
+Пути файлов ниже относятся к текущей итоговой версии stage_10. Если более поздний
+этап расширил старый файл, это явно указано. Например, класс ModelTrainingPipeline
+появился на stage 3, интеграция с MLflow была добавлена в этот класс на stage 6, а
+Prometheus-метрики вокруг inference появились на stage 10.
+
+Общий поток данных выглядит так:
+
+Binance OHLCV
+    -> очистка и проверка
+    -> causal feature engineering и target
+    -> Train / Validation / Test по времени
+    -> baseline и boosting-модели
+    -> time-series cross-validation и tuning
+    -> Validation backtest
+    -> MLflow Tracking и Model Registry
+    -> FastAPI inference + PostgreSQL
+    -> Docker Compose
+    -> GitHub Actions + GHCR
+    -> Prometheus + Grafana + PSI drift
+
+Сильная сторона общей архитектуры — разделение ответственности. Получение данных,
+построение признаков, обучение, симуляция торговли, tracking, serving и monitoring
+разнесены по разным пакетам. Это позволяет тестировать их независимо и заменять
+части системы без переписывания всего проекта.
+
+Главное ограничение: это качественный учебный production-oriented MLOps-проект, но
+не готовая система реальной торговли. В нём нет live ingestion, автоматического
+расчёта features перед запросом API, окончательной оценки на Test, управления
+риском реального портфеля, аутентификации API, HA-инфраструктуры и remote deployment.
+
+
+2. STAGE 1 — ПОЛУЧЕНИЕ, ОЧИСТКА И ХРАНЕНИЕ РЫНОЧНЫХ ДАННЫХ
+----------------------------------------------------------
+
+Git-контрольная точка: master, commit f85bd37.
+
+Назначение
+~~~~~~~~~~
+
+Этап получает исторические часовые свечи BTCUSDT через публичный Binance Spot REST
+API, приводит ответ биржи к единому OHLCV-формату, проверяет качество, удаляет явно
+некорректные строки и атомарно сохраняет Parquet-файлы.
+
+Точка запуска:
+
+    python scripts/download_market_data.py
+
+Основные файлы и ответственность
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+1) src/data/provider.py
+   MarketDataProvider — абстрактный контракт источника данных. Любой provider должен
+   реализовать fetch_ohlcv(symbol, timeframe, start, end) и вернуть DataFrame с
+   одинаковыми колонками.
+
+2) src/data/binance_provider.py
+   BinanceMarketDataProvider — конкретная реализация Binance. Использует endpoint:
+
+       https://api.binance.com/api/v3/klines
+
+   Binance отдаёт максимум 1000 свечей, поэтому provider запрашивает страницы в
+   цикле. Курсор следующей страницы равен timestamp последней свечи + 1 миллисекунда.
+   Ответ нормализуется до:
+
+       timestamp, open, high, low, close, volume
+
+   timestamp становится timezone-aware UTC, цены и объём — числами.
+
+3) src/data/validator.py
+   MarketDataValidator проверяет обязательные колонки, числовые значения, уникальность
+   и сортировку timestamp, положительные цены, неотрицательный volume, корректность
+   high/low и число пропущенных интервалов.
+
+4) src/data/cleaner.py
+   MarketDataCleaner удаляет строки, которые нельзя безопасно восстановить: NaN,
+   нечисловые или некорректные OHLCV. Дубликаты timestamp схлопываются по правилу
+   keep="last". Пропуски свечей не заполняются выдуманными ценами.
+
+5) src/data/storage.py
+   ParquetStorage отвечает только за чтение и безопасную запись.
+
+6) src/data/pipeline.py
+   MarketDataPipeline связывает provider -> validation -> cleaning -> validation ->
+   persistence и возвращает DataQualityReport.
+
+Как выполняется pipeline
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+MarketDataPipeline.run() берёт настройки из config.yaml, вычисляет effective_end,
+скачивает страницы, сохраняет raw snapshot, чистит данные и сохраняет единый
+processed-файл data/processed/BTCUSDT_1h.parquet. Если raw-файл того же диапазона
+уже существует, новый запуск объединяет старые и новые строки по timestamp. Поэтому
+повторный запуск в основном идемпотентен.
+
+Ключевой законченный метод атомарной записи из src/data/storage.py:
+
+    class ParquetStorage:
+        """Persist data atomically so interrupted writes keep prior data intact."""
+
+        def save(self, data: pd.DataFrame, path: str | Path) -> Path:
+            destination = Path(path)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            temporary = destination.with_suffix(destination.suffix + ".tmp")
+            data.to_parquet(temporary, index=False)
+            temporary.replace(destination)
+            return destination
+
+Почему сделано именно так
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Parquet выбран вместо CSV, потому что он сохраняет типы, timezone и числа без
+текстового round-trip, компактнее и быстрее читается pandas. Временный файл и replace
+защищают предыдущую версию от частично записанного результата. Абстрактный provider
+отделяет бизнес-процесс от Binance и облегчает unit-тесты через fake provider.
+
+Что архитектурно хорошо
+~~~~~~~~~~~~~~~~~~~~~~~
+
+- Provider, cleaner, validator и storage не смешаны в одном классе.
+- HTTP тестируется через httpx.MockTransport без реального обращения к Binance.
+- Повторы есть только для timeout/connect, HTTP 429 и 5xx; обычные 4xx не маскируются.
+- Есть защита от зацикливания пагинации: next_cursor обязан двигаться вперёд.
+- Очистка детерминирована и не создаёт искусственные рыночные свечи.
+- Дыры временного ряда диагностируются отдельно от битых строк.
+- Запись Parquet атомарна, каталоги данных исключены из Git.
+- config.yaml централизует symbol, timeframe, даты, timeout и retry.
+
+Что архитектурно плохо или ограничено
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Самый важный риск: provider фильтрует свечи по open timestamp < текущего времени,
+  но не проверяет, что последняя свеча уже закрыта. Binance может вернуть текущую
+  незакрытую 1h-свечу. Для строгого production inference надо сравнивать close time
+  свечи с effective_end или явно отбрасывать последнюю незакрытую свечу.
+- Retry использует постоянную задержку. Нет exponential backoff, jitter, обработки
+  Retry-After и общего rate limiter Binance.
+- httpx.Client не закрывается явным context manager/close. Для короткого CLI это
+  терпимо, но для долгоживущего процесса лучше управлять его жизненным циклом.
+- URL и лимит Binance зашиты в классе. Подмена provider возможна, но конфигурация
+  endpoint/rate policy не вынесена.
+- Raw snapshot уже нормализован до шести колонок и не является полным оригинальным
+  ответом Binance. Для строгого аудита иногда сохраняют исходный payload отдельно.
+- Missing intervals после очистки разрешены stage 1, хотя следующий dataset pipeline
+  откажется работать с такими данными. Это разумный fail-fast позже, но поведение
+  между этапами выглядит неоднородно.
+- Нет контроля схемы Parquet по версии и нет data catalog/lineage-системы.
+
+
+3. STAGE 2 — FEATURE ENGINEERING, TARGET И ML-ДАТАСЕТ
+----------------------------------------------------
+
+Git-контрольная точка: stage_2, commit 1fcf0d6.
+
+Назначение
+~~~~~~~~~~
+
+Этап превращает очищенные OHLCV-свечи в воспроизводимый ML-датасет с 28 признаками,
+трёхклассовым target BUY/HOLD/SELL и хронологическими Train/Validation/Test split.
+
+Точка запуска:
+
+    python scripts/build_ml_dataset.py
+
+Основные классы
+~~~~~~~~~~~~~~~
+
+- src/features/feature_engineer.py, FeatureEngineer — генерирует признаки.
+- src/features/indicators.py — RSI, MACD, True Range и ATR.
+- src/features/target.py, TargetBuilder — future return и класс цели.
+- src/dataset/splitter.py, ChronologicalDatasetSplitter — временное деление и purge.
+- src/dataset/validator.py, MLDatasetValidator — контракт датасета и защита от leakage.
+- src/dataset/storage.py, MLDatasetStorage — Parquet и детерминированный JSON.
+- src/dataset/pipeline.py, MLDatasetPipeline — orchestration всего этапа.
+
+Какие признаки строятся
+~~~~~~~~~~~~~~~~~~~~~~~
+
+- Доходности close за 1, 3, 6, 12 и 24 свечи.
+- SMA close и отклонение close от SMA для окон 6, 12, 24.
+- Rolling volatility для окон 6, 12, 24.
+- Изменение volume за 1 и 6 свечей.
+- Средний volume и отношение к среднему для окон 6 и 24.
+- Относительный диапазон high-low и размер тела свечи.
+- RSI(14).
+- MACD, signal и histogram.
+- ATR(14) и ATR относительно close.
+
+Все rolling/shift/ewm операции смотрят только на текущую и предыдущие строки. Будущее
+используется только в target, который явно запрещён в feature manifest.
+
+Семантика времени прогноза
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Строка t описывает полностью закрытую свечу t. Features строки t используют OHLCV
+свечи t и более ранних закрытых свечей. Прогноз разрешён только после закрытия t.
+Target сравнивает закрытие будущей свечи с закрытием текущей:
+
+    future_return[t] = close[t + horizon] / close[t] - 1
+
+При horizon_hours=3 и timeframe=1h используются три строки вперёд. Правила классов:
+
+    future_return >= +0.003 -> BUY
+    future_return <= -0.003 -> SELL
+    иначе                  -> HOLD
+
+Полный метод TargetBuilder.transform из src/features/target.py:
+
+    def transform(self, data: pd.DataFrame, horizon_periods: int) -> pd.DataFrame:
+        """Append future_return and target; unavailable final targets stay null."""
+        result = data.copy()
+        future_close = result["close"].shift(-horizon_periods)
+        result["future_return"] = future_close / result["close"] - 1
+        target = pd.Series(pd.NA, index=result.index, dtype="string")
+        available = result["future_return"].notna()
+        values = np.select(
+            [
+                result.loc[available, "future_return"] >= self.settings.buy_threshold,
+                result.loc[available, "future_return"] <= self.settings.sell_threshold,
+            ],
+            ["BUY", "SELL"],
+            default="HOLD",
+        )
+        target.loc[available] = values
+        result["target"] = target
+        return result
+
+Как делятся данные и зачем нужен purge
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Данные делятся по позиции 70/15/15 без shuffle. Последние horizon_periods строк Train
+и Validation удаляются. Иначе target последней Train-строки мог бы использовать цену
+из Validation, а target последней Validation-строки — цену из Test.
+
+Полный метод src/dataset/splitter.py:
+
+    def split(self, data: pd.DataFrame, purge_periods: int) -> DatasetSplits:
+        """Split by position and remove boundary rows from train and validation."""
+        size = len(data)
+        train_boundary = int(size * self.settings.train_ratio)
+        validation_boundary = int(size * (self.settings.train_ratio + self.settings.validation_ratio))
+        train_stop = train_boundary - purge_periods
+        validation_stop = validation_boundary - purge_periods
+        if train_stop <= 0 or validation_stop <= train_boundary or validation_boundary >= size:
+            raise ValueError("Dataset is too small for configured split ratios and purge horizon")
+        train = data.iloc[:train_stop].copy().reset_index(drop=True)
+        validation = data.iloc[train_boundary:validation_stop].copy().reset_index(drop=True)
+        test = data.iloc[validation_boundary:].copy().reset_index(drop=True)
+        return DatasetSplits(train, validation, test, purge_periods * 2)
+
+Результаты этапа
+~~~~~~~~~~~~~~~
+
+В data/ml создаются общий dataset, три split, feature_manifest.json,
+dataset_metadata.json и feature_statistics.json. Manifest фиксирует точный порядок
+признаков — это контракт между подготовкой данных, моделью и API.
+
+Почему сделано именно так
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Для временного ряда случайное перемешивание почти всегда даёт слишком оптимистичную
+оценку: модель обучается на будущем относительно проверяемых строк. Хронологическое
+деление и boundary purge сохраняют причинность. Явный manifest лучше, чем выбор всех
+числовых колонок: target или future_return не попадут в модель случайно.
+
+Что архитектурно хорошо
+~~~~~~~~~~~~~~~~~~~~~~~
+
+- Признаки детерминированы конфигурацией, порядок стабилен.
+- MLDatasetValidator запрещает target, future_* и бесконечные/пустые значения.
+- Rolling warm-up и последние строки без target удаляются явно и считаются в отчёте.
+- Horizon обязан быть точным кратным timeframe.
+- Train, Validation и Test не пересекаются по timestamp.
+- Purge закрывает важную разновидность target-boundary leakage.
+- Test создаётся, но следующие этапы намеренно его не читают.
+- Метаданные содержат периоды, размеры, распределение классов и параметры target.
+
+Что архитектурно плохо или ограничено
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Корректная семантика «закрытая свеча t» описана и поддерживается causal features,
+  но stage 2 доверяет входному processed-файлу. Если stage 1 сохранил незакрытую
+  последнюю свечу, этот этап сам её не распознает.
+- Имена return_3h, return_6h и т.п. фактически означают число строк, а не часы.
+  При timeframe, отличном от 1h, названия станут вводить в заблуждение.
+- feature_statistics.json считается по всему final dataset, включая Validation и
+  Test. Сейчас эти статистики не используются для обучения, поэтому прямого leakage
+  нет, но применять их как scaler/reference было бы нельзя. В stage 10 reference
+  правильно строится отдельно только по Train.
+- Фиксированные пороги +/-0.3% не учитывают волатильность, комиссии и режим рынка.
+- Деление идёт по числу строк, а не по календарным интервалам. Validator запрещает
+  gaps, что частично снимает проблему, но делает pipeline чувствительным к пропускам.
+- ATR реализован простой rolling mean, а не Wilder smoothing. Это не ошибка, но
+  конкретное определение индикатора должно оставаться зафиксированным.
+- При нулевом среднем volume отношение может стать infinity; такая строка удаляется.
+- Нет feature version ID кроме содержимого manifest и Git commit.
+
+
+4. STAGE 3 — BASELINE, LOGISTIC REGRESSION И BOOSTING
+----------------------------------------------------
+
+Git-контрольная точка: stage_3, commit d3d9bc1.
+
+Назначение
+~~~~~~~~~~
+
+Этап честно сравнивает пять моделей на одинаковых Train/Validation данных:
+
+    DummyClassifier
+    LogisticRegression
+    CatBoost
+    XGBoost
+    LightGBM
+
+Точка запуска:
+
+    python scripts/train_models.py
+
+На stage 3 pipeline был локальным. Текущий файл src/training/pipeline.py дополнительно
+содержит вызов MLflowTracker, добавленный на stage 6; ML-логика stage 3 от этого не
+изменилась.
+
+Архитектура моделей
+~~~~~~~~~~~~~~~~~~~
+
+src/models/base.py задаёт единый BaseClassifier: fit, predict, predict_proba, save,
+load, feature_importance и coefficient_report. Единое отображение классов:
+
+    SELL = 0
+    HOLD = 1
+    BUY  = 2
+
+BaseClassifier.predict_proba выравнивает столбцы вероятностей, даже если конкретная
+библиотека вернула classes_ в другом порядке:
+
+    def predict_proba(self, features: pd.DataFrame) -> np.ndarray:
+        """Return columns ordered as P(SELL), P(HOLD), P(BUY)."""
+        raw = np.asarray(self.estimator.predict_proba(features))
+        aligned = np.zeros((len(features), len(LABEL_MAPPING)), dtype=float)
+        for source_column, encoded_class in enumerate(self.estimator.classes_):
+            aligned[:, int(encoded_class)] = raw[:, source_column]
+        return aligned
+
+LogisticRegression обёрнута в sklearn Pipeline:
+
+    StandardScaler -> LogisticRegression
+
+Scaler обучается только внутри fit на Train. Tree boosting получает исходные признаки,
+поскольку масштабирование для деревьев не требуется. У всех библиотек ограничено
+число потоков до одного там, где это задано, и фиксированы random seed.
+
+Оценивание и артефакты
+~~~~~~~~~~~~~~~~~~~~~~
+
+Основная метрика — Validation Macro F1: F1 считается для BUY, HOLD и SELL, затем
+усредняется без учёта размера класса. Дополнительно сохраняются Accuracy, Macro
+Precision/Recall, метрики каждого класса, confusion matrix, feature importance,
+коэффициенты Logistic Regression, время обучения и improvement over Dummy.
+
+Каждая модель сериализуется joblib, затем сразу загружается обратно; predictions до
+и после save/load должны совпасть. Test-файл даже не открывается.
+
+Почему сделано именно так
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Dummy показывает нижнюю границу: сложная модель обязана быть полезнее простого
+предсказания самого частого класса. Logistic Regression даёт интерпретируемый линейный
+baseline. Три boosting-библиотеки проверяют нелинейные зависимости. Macro F1 выбран,
+потому что Accuracy может выглядеть высокой при постоянном предсказании доминирующего
+HOLD.
+
+Что архитектурно хорошо
+~~~~~~~~~~~~~~~~~~~~~~~
+
+- Все модели имеют общий интерфейс и один label mapping.
+- Одинаковые Train, Validation и feature manifest обеспечивают честное сравнение.
+- Scaling находится внутри sklearn Pipeline и не обучается на Validation.
+- Dummy baseline не позволяет оценивать модель без точки отсчёта.
+- Вероятности проверяются по форме и конечности значений.
+- Save/load round-trip ловит несовместимый или повреждённый артефакт сразу.
+- Есть per-class метрики: можно увидеть, что модель игнорирует BUY или SELL.
+- Test изолирован от выбора модели.
+
+Что архитектурно плохо или ограничено
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Выбор stage 3 основан на одном Validation-периоде. Один режим рынка может случайно
+  благоприятствовать конкретной модели. Stage 4 уменьшает риск, но Validation всё
+  равно многократно используется в разработке.
+- Нет probability calibration и явного решения по confidence threshold.
+- Boosting обучается с фиксированным числом деревьев без early stopping.
+- class_weight по умолчанию отсутствует; дисбаланс учитывается метрикой, но не loss.
+- TrainingDataValidator.validate проверяет уникальность timestamp и границы Train/
+  Validation, но в этой ветке метода не проверяет monotonic ordering каждой таблицы;
+  отдельный validate_frame это умеет. Источник обычно уже отсортирован, однако лучше
+  не полагаться на это неявно.
+- Ошибка одной библиотеки останавливает сравнение всех моделей; нет изоляции runs.
+- joblib нельзя безопасно загружать из недоверенного источника: это Python pickle.
+- В requirements одновременно находятся три тяжёлые boosting-библиотеки.
+- Feature importance разных библиотек нельзя напрямую сравнивать и нельзя трактовать
+  как причинное влияние на цену.
+
+
+5. STAGE 4 — МНОГОКРАТНАЯ ВРЕМЕННАЯ ПРОВЕРКА И TUNING
+------------------------------------------------------
+
+Git-контрольная точка: stage_4, commit 987a66c.
+
+Назначение
+~~~~~~~~~~
+
+Этап подбирает гиперпараметры CatBoost, XGBoost и LightGBM не по одному случайному
+разбиению, а на пяти последовательных expanding-window folds внутри Train. Validation
+не участвует в RandomizedSearchCV и загружается только после окончания всех поисков.
+Test не читается вообще.
+
+Точка запуска:
+
+    python scripts/tune_models.py
+
+Основные файлы
+~~~~~~~~~~~~~~
+
+- src/tuning/time_series.py — расчёт gap и описание границ folds.
+- src/tuning/tuner.py — RandomizedSearchCV для трёх boosting-моделей.
+- src/tuning/pipeline.py — Train-only search, финальный fit и Validation comparison.
+- src/tuning/models.py — структуры ModelSearchResult и TuningReport.
+- artifacts/hyperparameter_search — CSV/JSON истории поиска.
+- artifacts/tuned_models — сохранённые tuned joblib-модели.
+
+Как устроена временная проверка
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+sklearn TimeSeriesSplit расширяет обучающее окно по ходу времени. Будущие строки
+никогда не входят в train конкретного fold. Между train и validation fold оставляется
+gap, равный target horizon в строках. При 1h и horizon=3h gap равен 3.
+
+Полные функции из src/tuning/time_series.py:
+
+    def derive_gap_rows(horizon_hours: int, timeframe: str) -> int:
+        """Return the target horizon in rows; reject ambiguous timeframes."""
+        horizon = pd.Timedelta(horizon_hours, unit="h")
+        step = timeframe_to_timedelta(timeframe)
+        periods = horizon / step
+        if periods < 1 or not float(periods).is_integer():
+            raise ValueError("Target horizon must be an exact multiple of the market timeframe")
+        return int(periods)
+
+
+    def build_time_series_split(n_splits: int, gap: int) -> TimeSeriesSplit:
+        """Build sklearn's chronological expanding-window splitter."""
+        if n_splits < 2:
+            raise ValueError("n_splits must be at least 2")
+        if gap < 0:
+            raise ValueError("gap cannot be negative")
+        return TimeSeriesSplit(n_splits=n_splits, gap=gap)
+
+Для каждой модели RandomizedSearchCV проверяет 20 случайных комбинаций из явно
+заданного search space. scoring преобразуется из проектного macro_f1 в sklearn
+f1_macro. refit=False означает, что search не скрывает отдельное обучение: после
+выбора best_params создаётся проектная BaseClassifier-обёртка и заново обучается на
+полном Train.
+
+Порядок внутри HyperparameterTuningPipeline.run():
+
+1) загрузить только Train и manifest;
+2) построить TimeSeriesSplit и сохранить индексы/timestamps folds;
+3) завершить search для всех трёх моделей;
+4) только теперь загрузить Validation;
+5) fit каждой best-конфигурации на полном Train;
+6) один раз оценить конфигурации на Validation;
+7) сравнить с исходными результатами stage 3;
+8) сохранить модели и полный audit trail.
+
+Почему сделано именно так
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Временной ряд не является набором независимых случайных наблюдений. Expanding window
+имитирует реальную ситуацию: доступна накопленная история, но не будущее. Gap защищает
+от того, что label обучающей строки использует close уже из проверочного интервала.
+Отложенная загрузка Validation исключает её случайное использование внутри search.
+
+Что архитектурно хорошо
+~~~~~~~~~~~~~~~~~~~~~~~
+
+- Search использует только Train, а не Validation/Test.
+- Пять folds показывают стабильность модели во времени.
+- Сохраняются mean, std и score каждого fold, а не только лучшее число.
+- Все кандидаты и точные временные границы folds доступны для аудита.
+- Gap вычисляется из target horizon, а не задан магическим числом.
+- Random state делает выбор комбинаций воспроизводимым.
+- refit на полном Train после search отделён явно.
+- Исходные stage 3 артефакты не перезаписываются.
+- Для LightGBM subsample_freq=1 включает bagging при subsample < 1.
+
+Что архитектурно плохо или ограничено
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Это не nested cross-validation. Validation используется для выбора лучшей tuned-
+  модели и уже использовалась на stage 3, поэтому это development set, а не абсолютно
+  независимая оценка.
+- Test сохранён нетронутым, но проект пока не выполнил финальную одноразовую Test-
+  оценку. Окончательной оценки generalization после всех решений нет.
+- 20 случайных комбинаций быстрее полного перебора, но могут пропустить хорошую область.
+- Стандартный scorer f1_macro не фиксирует labels=[0,1,2]. Если в fold отсутствует
+  класс, набор усредняемых классов может отличаться.
+- Нет early stopping; n_jobs=1 воспроизводим, но медленен.
+- Один сбой модели останавливает весь этап.
+- Pipeline зависит от структуры JSON-артефактов stage 3 без versioned schema.
+- Многократное наблюдение Validation создаёт риск ручного overfitting решений.
+
+
+6. STAGE 5 — BACKTESTING НА ВИРТУАЛЬНОМ ПОРТФЕЛЕ
+------------------------------------------------
+
+Git-контрольная точка: stage_5, commit 760f859.
+
+Назначение
+~~~~~~~~~~
+
+Этап загружает уже обученные LightGBM stage 3 и tuned LightGBM stage 4, получает их
+predictions на Validation и симулирует торговлю. Переобучения нет. Для сравнения
+создаётся Buy & Hold с тем же капиталом, комиссией и slippage.
+
+Точка запуска:
+
+    python scripts/run_backtest.py
+
+Основные компоненты
+~~~~~~~~~~~~~~~~~~~
+
+- src/backtesting/predictor.py, ArtifactPredictor — модель и порядок features.
+- src/backtesting/portfolio.py, Portfolio — денежный учёт FLAT/LONG.
+- src/backtesting/engine.py, BacktestEngine — исполнение сигналов по свечам.
+- src/backtesting/metrics.py — return, drawdown, Sharpe и trade statistics.
+- src/backtesting/storage.py — equity curves, trades, summary и metadata.
+- src/backtesting/pipeline.py — сравнение ML-стратегий с Buy & Hold.
+
+Правило исполнения без look-ahead
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Prediction строки t доступен после закрытия свечи t. Купить или продать по close[t]
+уже нельзя, поэтому сигнал t исполняется по open[t+1]. В BacktestEngine цикл
+обрабатывает previous_signal:
+
+    if offset > 0:
+        previous_signal = str(signals.iloc[offset - 1])
+        signal_time = pd.Timestamp(market["timestamp"].iloc[offset - 1])
+        execution_time = pd.Timestamp(row["timestamp"])
+        if previous_signal == "BUY" and portfolio.position == "FLAT":
+            buy = portfolio.buy(float(row["open"]))
+        elif previous_signal == "SELL" and portfolio.position == "LONG":
+            sell = portfolio.sell(float(row["open"]))
+
+Последний сигнал без следующей свечи игнорируется. Оставшаяся LONG-позиция в конце
+принудительно закрывается по последнему close с exit_reason="end_of_backtest".
+
+Портфель имеет два состояния: весь капитал в USDT (FLAT) или весь доступный капитал
+в BTC (LONG). Short запрещён, leverage=1. Комиссия учитывается на обеих сторонах,
+slippage ухудшает цену покупки вверх и продажи вниз.
+
+Сохраняются total/excess return, drawdown, hourly Sharpe, trade counts, win rate,
+средний return/holding time, exposure, fees, полный trade log и equity curve.
+
+Почему сделано именно так
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Простая LONG/FLAT state machine прозрачна и легко проверяется по CSV. Исполнение на
+следующем open защищает от look-ahead. Buy & Hold нужен, потому что прибыль на растущем
+BTC ещё не доказывает пользу ML.
+
+Что архитектурно хорошо
+~~~~~~~~~~~~~~~~~~~~~~~
+
+- Модель не переобучается и Test не читается.
+- Проверяется число и порядок features модели относительно manifest.
+- Signal time и execution time сохраняются отдельно.
+- Комиссии/slippage входят в каждую операцию.
+- Нельзя повторно BUY в LONG или SELL в FLAT.
+- Equity/trades пишутся атомарно и доступны для аудита.
+- Есть benchmark и excess return.
+- Параметры и правила исполнения сохраняются в metadata.
+
+Что архитектурно плохо или ограничено
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Backtest идёт на той же Validation, по которой выбирались модели и параметры. Это
+  development-проверка, не независимый out-of-sample test.
+- All-in слишком груб: нет sizing, stop-loss, take-profit, risk limits и cash buffer.
+- Нет short, spread, order book liquidity, market impact, задержки и partial fills.
+- Target смотрит на 3 часа, а позиция держится до SELL: target horizon и holding period
+  напрямую не совпадают.
+- Используется жёсткий класс, а не probability/confidence.
+- Sharpe annualized через sqrt(24*365), что корректно только для часовых точек.
+- Исторический результат не доказывает будущую прибыльность.
+- joblib можно загружать только из доверенного источника.
+
+
+7. STAGE 6 — MLFLOW EXPERIMENT TRACKING И MODEL REGISTRY
+-------------------------------------------------------
+
+Git-контрольная точка: stage_6, commit 13b1f3d.
+
+Назначение
+~~~~~~~~~~
+
+Этап добавляет воспроизводимую историю экспериментов и управляемые версии моделей.
+MLflow не улучшает F1 сам по себе. Он отвечает на вопросы: какая модель запускалась,
+с какими параметрами и данными, какие получила метрики, где лежат её артефакты и
+какая версия считается champion/challenger.
+
+Основные компоненты
+~~~~~~~~~~~~~~~~~~~
+
+- src/mlops/mlflow_tracker.py, MLflowTracker — facade над MLflow API.
+- src/mlops/models.py, CryptoClassifierPyfunc — переносимая pyfunc-обёртка.
+- src/mlops/integration.py — перевод train/tuning/backtest артефактов в runs.
+- src/mlops/model_registry.py, ModelRegistry — versions и aliases.
+- scripts/import_tuning_runs_to_mlflow.py — импорт stage 4/5 без нового tuning.
+- scripts/check_mlflow_registry.py — проверка aliases и champion inference.
+
+Как логируется эксперимент
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Каждая baseline-модель получает отдельный run. В него записываются параметры, random
+seed, размеры/периоды split, Validation и per-class metrics, confusion matrix, feature
+importance/coefficients, native joblib, manifest и MLflow pyfunc.
+
+Для воспроизводимости считаются SHA-256 Train parquet, Validation parquet и manifest,
+а tags содержат Git branch/commit и MLflow version. Test не читается. После записи
+pyfunc загружается обратно, и predictions сравниваются с исходной моделью.
+
+Tuning history stage 4 импортируется из существующих JSON/CSV/joblib. Tag
+run_origin="imported_existing_experiment" честно показывает, что search не был
+изначально запущен под MLflow. Будущие tuning runs имеют direct_tuning.
+
+Model Registry
+~~~~~~~~~~~~~~
+
+Есть registered model crypto_direction_classifier с версиями. Сервис обращается не
+к номеру, а к alias:
+
+    models:/crypto_direction_classifier@champion
+
+Законченные методы src/mlops/model_registry.py:
+
+    def set_champion(self, model_version: str | int) -> None:
+        self.set_alias("champion", model_version)
+
+    def set_challenger(self, model_version: str | int) -> None:
+        self.set_alias("challenger", model_version)
+
+    def set_alias(self, alias: str, model_version: str | int) -> None:
+        self.client.set_registered_model_alias(
+            self.settings.registered_model_name, alias, str(model_version)
+        )
+
+    def load_model_by_alias(self, alias: str):
+        uri = f"models:/{self.settings.registered_model_name}@{alias}"
+        return mlflow.pyfunc.load_model(uri)
+
+Фактическое состояние после всех этапов:
+
+    champion   = version 1, baseline LightGBM stage 3
+    challenger = version 2, tuned LightGBM stage 4
+    backtest_status обеих = failed_profitability_check
+
+Champion здесь означает принятый ML-кандидат по Validation Macro F1, а не разрешение
+торговать деньгами. Автоматического promotion нет.
+
+Почему сделано именно так
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Alias отвязывает serving-код от номера версии. Отсутствие auto-promotion защищает от
+ситуации, когда немного лучший F1 автоматически отправляет экономически плохую модель
+в эксплуатацию. Hashes данных показывают, на каких файлах получен run.
+
+Что архитектурно хорошо
+~~~~~~~~~~~~~~~~~~~~~~~
+
+- MLflow спрятан за MLflowTracker; при enabled=false tracker становится no-op.
+- При enabled=true недоступность сервера обнаруживается до дорогого обучения.
+- Параметры, метрики, данные, Git metadata и model artifacts связаны одним run.
+- Pyfunc имеет signature/input example и возвращает BUY/HOLD/SELL.
+- Save/load prediction check выполняется и для MLflow model.
+- Registration идемпотентна по run_id.
+- Champion/challenger назначаются только явно.
+- История tuning/backtest импортируется без ложного переобучения.
+- Buy & Hold хранится отдельным run.
+
+Что архитектурно плохо или ограничено
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Backend — локальная SQLite, artifacts — filesystem. Это не HA и не object storage.
+- Нет auth, TLS и ролей Registry.
+- MLflow использует глобальные tracking_uri/active_run, что сложнее при параллелизме.
+- ensure_registered_model ловит общий MlflowException как отсутствие модели; network
+  или permission error лучше отличать от RESOURCE_DOES_NOT_EXIST.
+- backtest_status первоначально задаётся скриптом, а не общим формальным gate.
+- Начальное назначение aliases — ручное проектное решение, не policy engine.
+- Нет транзакции promote + canary + rollback.
+- code_paths увеличивает model artifact и поверхность доверия.
+- При mlflow.enabled=true обучение связано с доступностью tracking server.
+
+
+8. STAGE 7 — FASTAPI INFERENCE API И POSTGRESQL
+-----------------------------------------------
+
+Git-контрольная точка: stage_7, commit 8c8b754.
+
+Назначение
+~~~~~~~~~~
+
+FastAPI принимает уже рассчитанные 28 features, загружает champion из MLflow один
+раз при startup, выполняет prediction и сохраняет историю в PostgreSQL.
+
+Основные файлы
+~~~~~~~~~~~~~~
+
+- src/api/app.py — application factory и lifespan.
+- src/api/routes/health.py — liveness/readiness.
+- src/api/routes/model.py — информация о загруженной модели.
+- src/api/routes/predictions.py — predict и history.
+- src/api/schemas — Pydantic contracts.
+- src/inference/mlflow_model_provider.py — загрузка Registry alias.
+- src/inference/feature_validator.py — feature contract и fingerprint.
+- src/inference/service.py — бизнес-операция prediction.
+- src/database — SQLAlchemy engine, ORM и repository.
+- alembic/versions/20260907_0001_create_predictions.py — схема БД.
+
+HTTP API
+~~~~~~~~
+
+    GET  /api/v1/health/live
+    GET  /api/v1/health/ready
+    GET  /api/v1/model
+    POST /api/v1/predict
+    GET  /api/v1/predictions
+    GET  /api/v1/predictions/{request_id}
+
+Liveness означает, что процесс жив. Readiness отдельно требует загруженную модель и
+доступную PostgreSQL. Оркестратор не должен перезапускать живой процесс из-за временной
+ошибки зависимости, но не должен направлять на него трафик до готовности.
+
+Загрузка и feature contract
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+MLflowModelProvider разрешает alias champion в конкретную version и загружает pyfunc.
+Features берутся из MLflow signature, при её отсутствии — из manifest artifact.
+LoadedModel хранит name, alias, version, run_id, features и backtest_status до restart.
+
+PredictionRequest запрещает лишние поля, требует timezone-aware feature_timestamp и
+только конечные int/float. FeatureValidator требует точный symbol/timeframe, ровно
+ожидаемые features и создаёт DataFrame в порядке manifest.
+
+Для идемпотентности вычисляется стабильный SHA-256. Полный метод fingerprint:
+
+    @staticmethod
+    def fingerprint(
+        *,
+        symbol: str,
+        timeframe: str,
+        feature_timestamp: datetime,
+        features: Mapping[str, int | float],
+    ) -> str:
+        timestamp = feature_timestamp.astimezone(timezone.utc).isoformat().replace(
+            "+00:00", "Z"
+        )
+        normalized = {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "feature_timestamp": timestamp,
+            "features": {key: float(value) for key, value in features.items()},
+        }
+        serialized = json.dumps(
+            normalized, sort_keys=True, separators=(",", ":"), allow_nan=False
+        )
+        return sha256(serialized.encode("utf-8")).hexdigest()
+
+Если request_id уже есть с тем же hash, API возвращает сохранённый результат с
+replayed=true. Тот же request_id с другим payload даёт HTTP 409. Unique constraint
+и обработка IntegrityError закрывают гонку одновременных inserts.
+
+Что хранится в PostgreSQL
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Таблица predictions содержит request_id/hash, feature timestamp, feature JSONB,
+prediction, model name/alias/version/run_id, latency и created_at. CHECK ограничивает
+BUY/HOLD/SELL. Индексы есть по created_at, prediction и model_version. Схема создаётся
+Alembic migration, а не автоматически самим приложением.
+
+Почему сделано именно так
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Application factory и dependency injection позволяют подставить fake database/model
+provider. ModelProvider Protocol отделяет API от MLflow, Repository — SQL от business
+logic. request_id нужен, чтобы HTTP retry после потерянного ответа не создал новую
+логическую операцию.
+
+Что архитектурно хорошо
+~~~~~~~~~~~~~~~~~~~~~~~
+
+- Модель загружается один раз, не на каждый запрос.
+- Serving использует alias, а результат фиксирует version/run_id.
+- Строгий feature contract предотвращает скрытое изменение порядка.
+- PredictionService не зависит от FastAPI и отдельно тестируется.
+- Repository использует SQLAlchemy expressions, не user-built SQL.
+- DATABASE_URL берётся из environment, не из Git.
+- pool_pre_ping проверяет соединение.
+- Idempotency учитывает обычный replay и concurrent race.
+- История связывает ответ с моделью и входными features.
+- Alembic управляет версией схемы.
+- Разные ошибки получают 422, 409, 503 или 500.
+
+Что архитектурно плохо или ограничено
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- API не получает свечи и не рассчитывает features. Клиент должен воспроизвести все
+  28 значений, что создаёт риск training-serving skew.
+- feature_timestamp имеет timezone, но не проверяется на закрытие свечи, будущее и
+  границу 1h. Семантика документирована, но не enforced.
+- Нет auth, rate limit, TLS, request size policy и user audit. API только локальный.
+- Feature JSONB полезен для drift/audit, но БД растёт; retention/partitioning нет.
+- Смена champion требует restart API; hot reload/canary отсутствуют.
+- Concurrent replay может дважды выполнить predict до unique insert, хотя запись одна.
+- latency_ms считается до DB commit; это не полная HTTP latency.
+- Нет индекса feature_timestamp.
+- Синхронные DB и predict ограничивают high-load scaling.
+- Нет централизованных structured logs/tracing.
+
+
+9. STAGE 8 — DOCKER И DOCKER COMPOSE
+------------------------------------
+
+Git-контрольная точка: stage_8, commit d883eab.
+
+Назначение
+~~~~~~~~~~
+
+Этап упаковывает PostgreSQL, MLflow, Alembic migration, Registry bootstrap и FastAPI
+в воспроизводимый Linux-контур. Также создаются отдельные runtime и test images.
+
+Основные файлы
+~~~~~~~~~~~~~~
+
+- Dockerfile — multi-stage build.
+- compose.yaml — сервисы, сеть, volumes, healthchecks и зависимости.
+- .dockerignore — защита контекста сборки.
+- requirements-api.txt — фиксированные runtime dependencies.
+- requirements-test.txt — тестовые зависимости поверх runtime.
+- src/mlops/registry_bootstrap.py — восстановление отсутствующих aliases.
+- scripts/init_mlflow_registry.py — one-shot bootstrap command.
+- tests/test_docker_stage.py — статические проверки Docker-контракта.
+
+Multi-stage Dockerfile
+~~~~~~~~~~~~~~~~~~~~~~
+
+Логика образов:
+
+    base
+      -> builder       собирает wheels runtime dependencies
+          -> runtime   ставит wheels, код API, Alembic и bootstrap
+          -> test-builder/test добавляет pytest, pyarrow, tests и smoke scripts
+
+Runtime запускается не от root:
+
+    RUN groupadd --gid 10001 appuser \
+        && useradd --uid 10001 --gid appuser --create-home \
+             --home-dir /home/appuser appuser
+    USER appuser
+    CMD ["python", "-m", "uvicorn", "src.api.app:app",
+         "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+
+Test image существует только для проверок и поэтому содержит pytest/pyarrow/tests.
+Runtime image этого не содержит. Несколько Docker images — ожидаемый результат:
+runtime, test и внешние PostgreSQL/MLflow/Prometheus/Grafana решают разные задачи.
+
+Compose orchestration
+~~~~~~~~~~~~~~~~~~~~~
+
+Stage 8 ввёл сервисы:
+
+    postgres -> migrate
+    mlflow   -> mlflow-init
+    postgres + migration + mlflow + registry -> api
+
+PostgreSQL использует named volume. MLflow SQLite и artifacts используют bind mounts.
+Порты API/MLflow опубликованы только на 127.0.0.1. Между контейнерами используются
+DNS-имена postgres:5432 и mlflow:5000 в общей bridge network.
+
+depends_on проверяет не только запуск процесса:
+
+- postgres/mlflow должны стать healthy;
+- migrate/mlflow-init должны завершиться exit 0;
+- только потом запускается API;
+- readiness API используется как healthcheck.
+
+Alembic migration — отдельный one-shot container. Registry bootstrap создаёт только
+отсутствующие champion/challenger aliases и не переобучает модель. Перед первым
+side effect он проверяет наличие всех необходимых файлов.
+
+Почему сделано именно так
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Multi-stage build уменьшает runtime и отделяет инструменты тестирования. Wheels
+собираются один раз и ставятся без обращения к PyPI в runtime stage. One-shot migration
+не прячет изменение схемы внутри startup API. Health-based dependency graph уменьшает
+гонки «контейнер запущен, но сервис ещё не готов».
+
+Что архитектурно хорошо
+~~~~~~~~~~~~~~~~~~~~~~~
+
+- Один Dockerfile производит runtime и test с разным содержимым.
+- Версии прямых runtime dependencies зафиксированы.
+- Runtime работает как appuser, Compose добавляет no-new-privileges.
+- .dockerignore исключает .env, .git, datasets, artifacts и виртуальное окружение.
+- Host ports привязаны к loopback.
+- PostgreSQL данные, MLflow metadata/artifacts переживают обычный compose down.
+- Healthchecks проверяют реальные endpoints/pg_isready.
+- Миграция и Registry initialization имеют явный exit code.
+- Registry bootstrap идемпотентен и не выполняет fit.
+- JSON-file logging ограничен ротацией 10 MB x 3.
+- Unit и integration tests оформлены Compose profiles и не стартуют обычно.
+
+Что архитектурно плохо или ограничено
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Runtime image всё ещё содержит CatBoost, XGBoost и весь MLflow client, хотя champion
+  — LightGBM. Это упрощает совместимость model artifact, но делает образ большим.
+- Python/base и внешние service images закреплены тегами, но не digest. Тег теоретически
+  может измениться.
+- Нет read_only root filesystem, cap_drop, resource CPU/RAM limits и seccomp profile.
+- PostgreSQL password через environment виден в metadata контейнера; Docker secrets нет.
+- MLflow использует SQLite и один worker — только локальный режим.
+- Bind mounts MLflow зависят от host filesystem/permissions и медленнее на Windows.
+- mlflow-init монтирует локальные model files даже если aliases уже существуют. Если
+  host-файла нет, Docker mount может помешать запуску раньше, чем код решит, что
+  bootstrap не нужен.
+- Bootstrap не транзакционен: при сбое между champion/challenger возможен частичный
+  результат. Повторный запуск его обычно восстановит.
+- Нет reverse proxy, TLS, auth, backup automation и remote deployment.
+
+
+10. STAGE 9 — GITHUB ACTIONS CI/CD И GHCR
+-----------------------------------------
+
+Git-контрольная точка: stage_9, commit 077b25c.
+Основной технический commit stage 9: 55b714c.
+
+Назначение
+~~~~~~~~~~
+
+Этап переносит проверки с одного компьютера в GitHub Actions и публикует runtime image
+в GitHub Container Registry только после успешного CI на main.
+
+Основные файлы
+~~~~~~~~~~~~~~
+
+- .github/workflows/ci.yml — пять последовательных quality gates.
+- .github/workflows/publish.yml — gated publication в GHCR.
+- compose.ci.yaml — disposable volumes и CI overrides.
+- .env.ci.example — только тестовые credentials.
+- scripts/create_ci_bootstrap_artifacts.py — крошечные модели-fixtures без fit.
+- src/models/ci_fixture.py — CIConstantModel.
+- scripts/wait_for_compose.py — bounded wait и fail-fast по состоянию сервисов.
+- tests/test_ci_support.py — проверка permissions, pins, gates и isolation.
+
+CI dependency chain
+~~~~~~~~~~~~~~~~~~~
+
+    Python tests --------+
+                         +-> Docker runtime build
+    Project checks ------+       -> Linux container tests
+                                    -> Compose integration
+
+Python tests ставят requirements-test.txt, запускают pip check и pytest. Project checks
+компилируют Python и валидируют Docker Compose. Runtime build проверяет appuser,
+отсутствие secrets/parquet/.venv/pytest. Linux container tests запускают suite внутри
+test image.
+
+Compose integration создаёт отдельный стек, строит deterministic champion/challenger
+fixtures, поднимает PostgreSQL/MLflow/migration/bootstrap/API, ожидает healthy/exit 0,
+делает prediction smoke, проверяет запись в БД и Alembic version. На stage 10 тот же
+job расширен worker/Prometheus/Grafana/promtool/monitoring smoke.
+
+CI fixtures
+~~~~~~~~~~~
+
+CI не скачивает Binance, не читает Train/Validation/Test и не обучает модель.
+CIConstantModel возвращает постоянный HOLD или SELL и имеет parameters trained=False.
+Это делает integration быстрым и детерминированным, одновременно проверяя MLflow
+registration, pyfunc loading, API contract и PostgreSQL.
+
+Publish workflow
+~~~~~~~~~~~~~~~~
+
+Publish срабатывает после workflow_run только если:
+
+- CI завершён success;
+- исходное событие CI было push;
+- branch была main;
+- head repository совпадает с текущим repository.
+
+Workflow получает packages:write только в publish job, использует GITHUB_TOKEN, checkout
+точно протестированного SOURCE_SHA, Buildx и OCI metadata. Публикуются два тега:
+
+    main                         — изменяемый указатель текущей main
+    sha-<full commit SHA>        — неизменяемая версия
+
+После push workflow сам выполняет docker pull по digest и проверяет labels source,
+revision и created. На stage 10 фактически опубликован:
+
+    ghcr.io/pavel7479/mlops_pipeline/api
+    sha-0d1dd3f700b5f3526ae571283a61c4caee1a4601
+    digest sha256:10cc403cb53d164e8e68acb466972499efb594b212d7d2d9b1488ea1c9d8d79c
+
+Почему сделано именно так
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Последовательные needs превращают проверки в release gate: дорогая сборка не идёт
+после упавших unit tests, а непроверенный image не публикуется. SHA tag позволяет
+точно повторить deployment и rollback. main удобен человеку, но digest/SHA нужен для
+неизменяемой эксплуатации.
+
+Что архитектурно хорошо
+~~~~~~~~~~~~~~~~~~~~~~~
+
+- PR и main проходят одинаковые Python/Docker/integration проверки.
+- Branch protection/ruleset не позволяет слить PR без required checks.
+- Actions закреплены полными commit SHA, а permissions минимальны.
+- pull_request_target не используется, что безопаснее для кода из PR.
+- Publish отделён от CI и разрешён только после success на main.
+- GITHUB_TOKEN используется вместо долговечного PAT.
+- GHA Buildx cache ускоряет повторные сборки.
+- Runtime isolation проверяется автоматически.
+- Disposable CI stack не использует реальные credentials/data/Registry.
+- Failed Compose job печатает диагностику, cleanup выполняется always().
+- Опубликованный image проверяется независимым pull и OCI labels.
+
+Что архитектурно плохо или ограничено
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- ci.yml запускается и на push feature branch, и на pull_request. Для одного SHA
+  возникают два почти одинаковых workflow run, что тратит runner time. Можно оставить
+  PR events и push только main/tags.
+- concurrency group использует github.ref; push и PR имеют разные refs, поэтому не
+  дедуплицируют друг друга.
+- Шаг git diff --check после обычного checkout проверяет чистый working tree и почти
+  ничего не говорит о whitespace уже в commit. Лучше git show --check или diff с base.
+- Нет formatter/linter, type checker, coverage threshold, SAST, dependency audit,
+  container vulnerability scan, SBOM и image signing.
+- Direct dependencies pin-нуты, но нет lock с hashes для всех transitive packages.
+- Constant CI model хорошо проверяет wiring, но не доказывает численную корректность
+  настоящего LightGBM artifact. Это задача unit/model acceptance, не Compose smoke.
+- Branch ruleset — внешний GitHub state, его конфигурация не version-controlled кодом.
+- main tag изменяемый; production должен разворачивать digest или sha-tag.
+- GHCR publication не равна deployment: сервера/окружения в проекте нет.
+
+
+11. STAGE 10 — PROMETHEUS, GRAFANA И ML DRIFT
+---------------------------------------------
+
+Git-контрольная точка: stage_10, commit b22d954.
+В GitHub этот stage слит в main merge-коммитом 0d1dd3f7.
+
+Назначение
+~~~~~~~~~~
+
+Этап добавляет наблюдаемость, не меняя модель, target или champion. FastAPI отдаёт
+service/inference metrics. Отдельный monitoring-worker читает последние predictions
+из PostgreSQL, считает распределение классов и PSI feature drift относительно Train.
+Prometheus собирает временные ряды и проверяет alert rules, Grafana автоматически
+показывает два dashboard.
+
+Основные файлы
+~~~~~~~~~~~~~~
+
+- src/monitoring/metrics.py — API и worker Prometheus collectors.
+- src/monitoring/reference.py — Train-only reference artifact.
+- src/monitoring/drift.py — PSI и статусы drift.
+- src/monitoring/repository.py — bounded read из PostgreSQL.
+- src/monitoring/worker.py — автономный polling process.
+- monitoring/prometheus/prometheus.yml и rules.yml.
+- monitoring/grafana/provisioning — datasource/dashboard provisioning.
+- monitoring/grafana/dashboards — два version-controlled dashboard.
+- scripts/build_monitoring_reference.py — генерация reference.
+- scripts/smoke_test_monitoring.py — end-to-end monitoring acceptance.
+
+API metrics
+~~~~~~~~~~~
+
+ApplicationMetrics использует собственный CollectorRegistry, поэтому тесты могут
+создавать несколько FastAPI app без duplicate collector errors. Метрики:
+
+    crypto_http_requests_total{method,route,status_code}
+    crypto_http_request_duration_seconds{method,route}
+    crypto_ml_inference_duration_seconds{model_version}
+    crypto_ml_predictions_total{prediction,model_version}
+    crypto_ml_prediction_replays_total
+    crypto_ml_prediction_conflicts_total
+    crypto_database_write_failures_total
+    crypto_loaded_model_info{registered_model,alias,version,backtest_status}
+    crypto_model_loaded
+
+Labels намеренно низкой cardinality. В них нет request_id, timestamp, IP, run_id,
+SQL или payload. Dynamic URL /predictions/<uuid> нормализуется до route template.
+Prediction counter увеличивается только после успешного commit в PostgreSQL. Replay,
+conflict и DB failure считаются отдельно. inference histogram измеряет только predict,
+HTTP histogram — весь запрос.
+
+Endpoint GET /metrics не включён в Swagger и не обращается к БД. Он отдаёт snapshot
+локального registry процесса.
+
+Train-only reference и PSI
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+scripts/build_monitoring_reference.py читает только:
+
+    data/ml/BTCUSDT_1h_train.parquet
+    data/ml/feature_manifest.json
+
+Он сохраняет маленький monitoring/reference/BTCUSDT_1h_train_reference.json. В нём
+28 features, Train period/row count, hashes исходных файлов, min/max/mean/std и доли
+до десяти quantile bins. Validation, Test и общий dataset не используются.
+
+Фактический reference:
+
+    Train rows: 16 415
+    Train: 2024-01-02 09:00 UTC .. 2025-11-16 07:00 UTC
+    Features: 28
+    Train SHA-256: 78fc4c8e4f94128e25a5a0725953cb757db2773c8c2904eef482a02cba415776
+    Manifest SHA-256: a7f55efa39abeb555104e7f1ba000978024017a870144091a466470a9a353c2b
+
+PSI сравнивает долю Train и текущую долю в одинаковых bins. epsilon=1e-6 защищает
+логарифм от нулей. Полная функция принятия решения из src/monitoring/drift.py:
+
+    def calculate_drift(
+        feature_rows: list[dict[str, float]],
+        reference: MonitoringReference,
+        *,
+        min_samples: int,
+        warning_threshold: float,
+        critical_threshold: float,
+    ) -> DriftResult:
+        if len(feature_rows) < min_samples:
+            return DriftResult(False, "insufficient_data", {}, 0, 0)
+        scores: dict[str, float] = {}
+        for name in reference.feature_names:
+            values = [float(row[name]) for row in feature_rows if name in row]
+            item = reference.features[name]
+            scores[name] = population_stability_index(
+                values, item["boundaries"], item["expected_shares"]
+            )
+        critical = sum(score >= critical_threshold for score in scores.values())
+        warning = sum(
+            warning_threshold <= score < critical_threshold for score in scores.values()
+        )
+        status = "critical" if critical else "warning" if warning else "stable"
+        return DriftResult(True, status, scores, warning, critical)
+
+Настройки:
+
+    window_size = 500 последних prediction rows
+    min_samples = 100
+    stable:   PSI < 0.10
+    warning:  0.10 <= PSI < 0.25
+    critical: PSI >= 0.25
+    worker interval = 60 seconds
+
+Если данных меньше 100, drift_available=0, scores показываются нулевыми, но статус
+означает insufficient_data, а не «рынок стабилен». Dashboard/rules должны всегда
+смотреть на drift_available.
+
+Monitoring worker
+~~~~~~~~~~~~~~~~~
+
+MonitoringRepository выполняет один read-only SELECT features,prediction,created_at,
+ORDER BY newest, LIMIT 500. Worker не вычисляет features повторно, а анализирует те
+входы, которые действительно были поданы API.
+
+Каждый цикл:
+
+1) проверяет /health MLflow;
+2) читает bounded window PostgreSQL;
+3) обновляет database/mlflow reachable;
+4) считает BUY/HOLD/SELL shares;
+5) при достаточном окне считает 28 PSI;
+6) обновляет timestamp успешного цикла.
+
+Worker — отдельный process и отдаёт /metrics на 9101 только внутри Docker network.
+Если PostgreSQL недоступен, он ставит database_reachable=0 и пробует снова в следующем
+цикле. Если MLflow недоступен, PSI всё равно продолжает считаться.
+
+Prometheus, alerts и Grafana
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Prometheus 3.14.0 scrape interval 15s, retention 7d. Targets:
+
+    crypto-api        -> api:8000/metrics
+    crypto-ml-monitor -> monitoring-worker:9101/metrics
+
+Восемь rules:
+
+    CryptoApiDown
+    MonitoringWorkerDown
+    DatabaseUnavailable
+    MlflowUnavailable
+    HighHttpErrorRate
+    HighApiLatency
+    CriticalFeatureDrift
+    PredictionClassDominance
+
+Rate/latency alerts требуют минимум 20 запросов за 5 минут, dominance — минимум 100
+samples, а нарушения должны сохраняться 1–2 минуты. Это уменьшает ложные срабатывания.
+Alertmanager не добавлен, поэтому rule только меняет состояние в Prometheus.
+
+Grafana 13.2.1 получает datasource Prometheus -> http://prometheus:9090 автоматически.
+Provisioning также создаёт:
+
+    Crypto ML — Service Overview
+    Crypto ML — Model Monitoring
+
+Первый показывает availability, traffic/errors/latency, inference и модель. Второй —
+window, class shares, PSI и drift state. PostgreSQL, Prometheus и Grafana используют
+разные persistent volumes.
+
+Fault isolation
+~~~~~~~~~~~~~~~
+
+API не зависит от worker, Prometheus или Grafana. monitoring-worker зависит от готовой
+схемы PostgreSQL, но не блокирует API. Уже загрузившийся API продолжает inference при
+отказе MLflow; только новый startup не сможет загрузить champion. Локальная проверка
+подтвердила, что POST /predict работает при остановленных Prometheus/Grafana.
+
+Почему сделано именно так
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Monitoring plane отделён от serving plane, чтобы сломанный dashboard не останавливал
+бизнес-операцию. Worker читает фактические production-like requests из БД, поэтому
+drift отражает реальные входы API. Train-only reference не загрязняется Validation/Test.
+Provisioning в Git делает dashboard и datasource воспроизводимыми.
+
+Что архитектурно хорошо
+~~~~~~~~~~~~~~~~~~~~~~~
+
+- Monitoring не меняет champion и не запускает retraining.
+- Метрики учитывают смысл commit/replay/conflict.
+- Низкая cardinality защищает Prometheus от взрыва series.
+- Отдельные HTTP и inference histograms помогают локализовать задержку.
+- Worker read-only, query ограничен LIMIT 500.
+- Reference содержит hashes и точный feature contract.
+- Test/Validation не используются как baseline drift.
+- PSI обрабатывает zero bins и out-of-range values через крайние bins.
+- insufficient_data моделируется отдельно.
+- Monitoring failure не блокирует inference.
+- Prometheus config/rules проверяются promtool локально и в CI.
+- Dashboards/datasource автоматически восстанавливаются из Git.
+- История Prometheus и состояние Grafana переживают обычный compose down/up.
+- Smoke проверяет API -> DB -> worker -> Prometheus -> Grafana.
+
+Что архитектурно плохо или ограничено
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- PSI показывает изменение входов, но не качество predictions и не прибыльность.
+- Live Accuracy/F1 отсутствуют: их нельзя считать без последующего ground truth;
+  outcome matching через 3 часа не реализован.
+- Когда samples < min_samples, score gauges равны 0. Без drift_available это легко
+  ошибочно принять за stable.
+- calculate_drift использует общее число rows для min_samples, но конкретный feature
+  может отсутствовать в части legacy/corrupt rows. API сейчас гарантирует полный набор,
+  однако worker мог бы валидировать count каждого feature.
+- DB error ловится, а неожиданная ошибка PSI после успешного SELECT может выйти из
+  run_cycle и завершить главный while-loop. Нужна защита всего цикла.
+- Window может содержать predictions нескольких model versions; repository не выбирает
+  model_version и метрики не сегментированы по нему.
+- Route template middleware вручную обходит и компилирует routes на каждый HTTP request
+  и использует внутренние атрибуты FastAPI original_router/include_context. Это работает
+  с закреплённой версией, но хрупко и неэффективно при обновлении framework.
+- Counters живут в памяти API и сбрасываются при restart. Prometheus понимает counter
+  reset, но локальное текущее значение не является всей историей.
+- Reference writer не использует atomic temporary replace, в отличие от datasets.
+- Жёсткое требование ровно 28 features затруднит эволюцию feature schema.
+- Static scrape targets, нет TLS/auth/service discovery.
+- Нет Alertmanager и внешних уведомлений.
+- Prometheus retention всего 7 дней и нет remote write/backup.
+- Нет логов/trace correlation, Grafana показывает только metrics.
+
+
+12. СКВОЗНЫЕ РЕШЕНИЯ: CONFIG, АРТЕФАКТЫ И ТЕСТЫ
+------------------------------------------------
+
+config.yaml и src/config/settings.py
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Все stages используют один AppSettings из frozen dataclasses. load_settings читает
+YAML, нормализует UTC, проверяет ratios/ranges, превращает пути в absolute и создаёт
+типизированные вложенные настройки. Для container runtime часть значений перекрывается
+environment: MLFLOW_TRACKING_URI и MONITORING_*; DATABASE_URL всегда только environment.
+
+Плюсы:
+
+- одна точка конфигурации;
+- immutable settings после startup;
+- ранняя проверка неверных ratios, ports, thresholds и paths;
+- секрет PostgreSQL не попадает в YAML;
+- пути разрешаются относительно config file, а не случайного current directory.
+
+Минусы:
+
+- load_settings превратился в большой монолит на несколько сотен строк;
+- defaults продублированы в dataclasses, YAML и parser;
+- environment overrides реализованы не для всех параметров одинаково;
+- ручной parser сложнее расширять, чем schema-based settings library;
+- некоторые числа проверяются неполно: например, HTTP timeout/retry delay;
+- bool(value) может неожиданно трактовать непустую строку "false" как True, если YAML
+  написан строкой, а не настоящим boolean.
+
+Файловые контракты
+~~~~~~~~~~~~~~~~~~
+
+Stages связаны понятными артефактами: Parquet, JSON, CSV, joblib, MLflow model. Это
+просто и прозрачно для учебного проекта. Manifest и hashes уменьшают риск несовместимости.
+Минус — схемы большинства JSON не имеют formal schema version, а pipeline зависит от
+конкретных имён/структуры файлов. Для большой команды понадобились бы data/model
+artifact registry, versioned schemas и orchestrator.
+
+Тестирование
+~~~~~~~~~~~~
+
+Итоговая suite содержит 137 тестов. Есть unit tests provider/cleaner/validator/features/
+target/split/model/evaluator/tuning/backtest/MLflow/API/monitoring, Linux test image и
+полный disposable Compose smoke. Это сильнее обычного «pytest прошёл на ноутбуке».
+
+Но отсутствуют:
+
+- coverage gate;
+- property-based tests на большой спектр временных границ;
+- performance/load tests;
+- schema migration compatibility test с большой реальной БД;
+- chaos tests зависимостей;
+- security/static type checks;
+- финальная модельная оценка на untouched Test.
+
+
+13. ТРИ НЕЗАВИСИМЫХ ЖИЗНЕННЫХ ЦИКЛА
+------------------------------------
+
+Архитектурно важно не смешивать:
+
+1) ML lifecycle:
+   data -> features -> Train/CV/Validation -> backtest -> MLflow version -> alias.
+
+2) Application lifecycle:
+   source commit -> CI -> Docker image -> GHCR digest -> container restart/rollback.
+
+3) Runtime monitoring lifecycle:
+   prediction rows -> worker -> Prometheus -> alert state -> Grafana.
+
+MLflow model version не равна Docker image version. Смена champion не требует сборки
+нового image, но требует controlled restart API. Rollback image не обязан менять model
+alias. Drift alert не должен автоматически запускать retraining/promotion.
+
+Это разделение сделано правильно: у кода, модели и наблюдаемости разные причины и
+скорость изменений. Одновременно оно требует дисциплины, потому что совместимость
+feature contract должна поддерживаться между всеми тремя циклами.
+
+
+14. ОБЩАЯ ОЦЕНКА АРХИТЕКТУРЫ
+----------------------------
+
+Что получилось особенно хорошо
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Причинная временная семантика features/target и purge на границах.
+- Test сознательно изолирован от разработки и CI.
+- Чёткие слои и dependency injection вместо одного большого script.
+- Dummy baseline, per-class metrics и time-series CV.
+- Backtest исполняет сигнал только на следующей свече.
+- Воспроизводимость через manifest, hashes, Git metadata и MLflow.
+- Registry aliases без опасного auto-promotion.
+- Идемпотентный API с конкретной model version в каждой записи.
+- Alembic, non-root containers, healthchecks и persistent state.
+- CI проверяет код, Linux image и полный Compose stack.
+- GHCR image привязан к merge SHA и digest.
+- Monitoring plane не блокирует inference.
+- Train-only drift reference и version-controlled dashboards.
+
+Главные проблемы по приоритету
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Критический приоритет до production:
+
+1) Гарантированно отбрасывать незакрытую последнюю Binance-свечу.
+2) Создать единый online feature pipeline, чтобы API не доверял 28 features клиента.
+3) Один раз оценить замороженное решение на untouched Test, не подгоняя после результата.
+4) Не использовать текущую модель для денег: backtest_status = failed_profitability_check.
+5) Добавить auth/TLS/rate limits/secrets management и threat model.
+
+Высокий приоритет для надёжности:
+
+6) PostgreSQL для MLflow backend + object storage, backups и restore drill.
+7) Формальные versioned schemas артефактов и feature version compatibility.
+8) Полный error boundary цикла worker и segmentation по model version.
+9) Structured logs, correlation ID и централизованный log storage.
+10) Resource limits, read-only filesystem/capabilities и image vulnerability scanning.
+
+Средний приоритет:
+
+11) Исправить CI whitespace check, убрать двойной push+PR run, добавить lint/type/coverage.
+12) Добавить probability calibration и decision thresholds с учётом комиссии.
+13) Улучшить backtest: sizing, spread, liquidity, latency и walk-forward evaluation.
+14) Автоматизировать ground truth после horizon, но не auto-promote без review.
+15) Добавить Alertmanager только когда появится реальный канал реагирования.
+
+
+15. ИТОГ ЧЕЛОВЕЧЕСКИМ ЯЗЫКОМ
+----------------------------
+
+Проект построен как последовательная учебная MLOps-система: он умеет скачать рынок,
+создать признаки, обучить и сравнить модели, подобрать параметры по времени, проверить
+торговую логику, зарегистрировать модель, обслужить HTTP-запрос, сохранить историю,
+упаковаться в Docker, пройти GitHub CI, опубликовать image и показать состояние в
+Prometheus/Grafana.
+
+Архитектура хороша тем, что почти каждый риск получил отдельную границу: provider,
+manifest, purge, validation, model wrapper, Registry alias, repository, migration,
+container healthcheck, CI gate и monitoring worker. Поэтому проект понятен, тестируем
+и пригоден как основа для дальнейшей работы.
+
+Архитектура пока не production trading, потому что реальный непрерывный путь
+«закрытая свеча -> те же features -> prediction -> исполнение -> future outcome»
+не автоматизирован и не защищён инфраструктурно. Самая важная честная характеристика
+текущей модели уже сохранена в Registry: failed_profitability_check. Техническая
+платформа работает, но бизнес-готовность модели не подтверждена.
