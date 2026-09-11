@@ -291,5 +291,23 @@ cd D:\Pavel\MLOps_pipeline
 docker compose --env-file .env.docker up -d
 docker compose --env-file .env.docker ps --all
 
-Вход в Grafana:
-admin
+Вход в Grafana: http://127.0.0.1:3000. Логин — `admin`, пароль
+берётся из `GRAFANA_ADMIN_PASSWORD` в локальном файле `.env.docker`.
+
+Ручной запуск monitoring smoke-test без записи пароля в README:
+
+```powershell
+$env:API_BASE_URL = "http://127.0.0.1:18000"
+$env:GRAFANA_ADMIN_USER = "admin"
+$passwordLine = Get-Content .env.docker |
+  Where-Object { $_ -match '^GRAFANA_ADMIN_PASSWORD=' } |
+  Select-Object -First 1
+$env:GRAFANA_ADMIN_PASSWORD = ($passwordLine -split '=', 2)[1]
+.\.venv\Scripts\python.exe scripts\smoke_test_monitoring.py
+```
+
+Удалить неиспользуемые dangling (`none`) Docker images:
+
+```powershell
+docker image prune
+```
