@@ -2,6 +2,29 @@
 
 [![CI](https://github.com/pavel7479/MLOps_pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/pavel7479/MLOps_pipeline/actions/workflows/ci.yml)
 
+## Блок 11 — данные по 6 криптовалютам
+
+Конфигурация расширена до BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT, BNBUSDT,
+DOGEUSDT на интервалах 1h и 1d. Одна команда создаёт и валидирует 12
+независимых Parquet-наборов, исключает незакрытые свечи и формирует manifest
+с SHA-256:
+
+~~~powershell
+.\.venv\Scripts\python.exe scripts\download_market_data.py --all
+~~~
+
+Один набор:
+
+~~~powershell
+.\.venv\Scripts\python.exe scripts\download_market_data.py --symbol ETHUSDT --interval 1d
+~~~
+
+Файлы находятся в data/raw и data/processed, manifest — в
+data/processed/market_data_manifest.json. Часовые данные предназначены для
+будущей торговой ML-модели, дневные — для будущих признаков дневного тренда.
+Подробности, проверка manifest и real-network smoke-test:
+[docs/multi_asset_data.md](docs/multi_asset_data.md).
+
 Учебный production-oriented ML-проект по прогнозированию движения криптовалютного рынка: от загрузки OHLCV и feature engineering до временной валидации, backtesting, MLflow Model Registry и локального FastAPI inference API с PostgreSQL.
 
 ## Требования и установка
@@ -291,5 +314,23 @@ cd D:\Pavel\MLOps_pipeline
 docker compose --env-file .env.docker up -d
 docker compose --env-file .env.docker ps --all
 
-Вход в Grafana:
-admin
+Вход в Grafana: http://127.0.0.1:3000. Логин — `admin`, пароль
+берётся из `GRAFANA_ADMIN_PASSWORD` в локальном файле `.env.docker`.
+
+Ручной запуск monitoring smoke-test без записи пароля в README:
+
+```powershell
+$env:API_BASE_URL = "http://127.0.0.1:18000"
+$env:GRAFANA_ADMIN_USER = "admin"
+$passwordLine = Get-Content .env.docker |
+  Where-Object { $_ -match '^GRAFANA_ADMIN_PASSWORD=' } |
+  Select-Object -First 1
+$env:GRAFANA_ADMIN_PASSWORD = ($passwordLine -split '=', 2)[1]
+.\.venv\Scripts\python.exe scripts\smoke_test_monitoring.py
+```
+
+Удалить неиспользуемые dangling (`none`) Docker images:
+
+```powershell
+docker image prune
+```

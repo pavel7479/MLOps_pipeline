@@ -31,17 +31,21 @@ class BinanceMarketDataProvider(MarketDataProvider):
         retry_delay_seconds: float = 2,
         client: httpx.Client | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         self.client = client or httpx.Client(timeout=timeout_seconds)
         self.max_retries = max_retries
         self.retry_delay_seconds = retry_delay_seconds
         self.sleep = sleep
+        self.now = now
         self.request_count = 0
 
     def _request(self, params: dict[str, Any]) -> list[list[Any]]:
         last_error: Exception | None = None
+        attempts_made = 0
         for attempt in range(self.max_retries + 1):
             try:
+                attempts_made += 1
                 self.request_count += 1
                 response = self.client.get(self.URL, params=params)
                 if response.status_code == 429 or response.status_code >= 500:
@@ -53,29 +57,54 @@ class BinanceMarketDataProvider(MarketDataProvider):
                 if not isinstance(payload, list):
                     raise MarketDataDownloadError("Binance returned a non-list response")
                 return payload
-            except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError) as exc:
+            except (httpx.TransportError, httpx.HTTPStatusError) as exc:
                 last_error = exc
                 retryable = not isinstance(exc, httpx.HTTPStatusError) or exc.response.status_code in {429} or exc.response.status_code >= 500
                 if not retryable or attempt >= self.max_retries:
                     break
-                LOGGER.warning("Market data request failed; retry %d/%d: %s", attempt + 1, self.max_retries, exc)
-                self.sleep(self.retry_delay_seconds)
+                delay = self.retry_delay_seconds * (2 ** attempt)
+                LOGGER.warning(
+                    "Binance request symbol=%s interval=%s failed; "
+                    "retry %d/%d in %.2f seconds: %s",
+                    params.get("symbol"),
+                    params.get("interval"),
+                    attempt + 1,
+                    self.max_retries,
+                    delay,
+                    exc,
+                )
+                self.sleep(delay)
         raise MarketDataDownloadError(
-            f"Binance request failed after {self.max_retries + 1} attempts: {last_error}"
+            f"Binance request failed after {attempts_made} attempts: {last_error}"
         ) from last_error
 
     def fetch_ohlcv(
         self, symbol: str, timeframe: str, start: datetime, end: datetime | None
     ) -> pd.DataFrame:
         cursor = int(start.timestamp() * 1000)
-        end_ms = int(end.timestamp() * 1000) if end else int(datetime.now(timezone.utc).timestamp() * 1000)
+        now_ms = int(self.now().astimezone(timezone.utc).timestamp() * 1000)
+        requested_end_ms = int(end.timestamp() * 1000) if end else now_ms
+        end_ms = min(requested_end_ms, now_ms)
         rows: list[list[Any]] = []
         while cursor < end_ms:
             page = self._request({"symbol": symbol, "interval": timeframe, "startTime": cursor, "endTime": end_ms, "limit": self.LIMIT})
             if not page:
                 break
-            eligible = [row for row in page if int(row[0]) < end_ms]
+            if any(len(row) < 7 for row in page):
+                raise MarketDataDownloadError("Binance returned a malformed kline")
+            eligible = [
+                row
+                for row in page
+                if int(row[0]) < end_ms and int(row[6]) < end_ms
+            ]
             rows.extend(eligible)
+            LOGGER.info(
+                "Binance page symbol=%s interval=%s received=%d closed=%d",
+                symbol,
+                timeframe,
+                len(page),
+                len(eligible),
+            )
             next_cursor = int(page[-1][0]) + 1
             if next_cursor <= cursor:
                 raise MarketDataDownloadError("Binance pagination did not advance")

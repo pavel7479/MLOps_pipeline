@@ -1,5 +1,6 @@
 """Market data quality validation and gap diagnostics."""
 
+import numpy as np
 import pandas as pd
 
 from .models import MARKET_COLUMNS, ValidationResult, timeframe_to_timedelta
@@ -12,11 +13,14 @@ class MarketDataValidator:
         missing = [column for column in MARKET_COLUMNS if column not in data.columns]
         if missing:
             return ValidationResult(False, len(data), 0, 0, (f"Missing columns: {', '.join(missing)}",))
+        if data.empty:
+            return ValidationResult(False, 0, 0, 0, ("Dataset is empty",))
         frame = data[MARKET_COLUMNS].copy()
         timestamps = pd.to_datetime(frame["timestamp"], utc=True, errors="coerce")
         numeric = frame[["open", "high", "low", "close", "volume"]].apply(pd.to_numeric, errors="coerce")
         duplicate_count = int(timestamps.duplicated(keep=False).sum())
         invalid = timestamps.isna() | numeric.isna().any(axis=1)
+        invalid |= ~np.isfinite(numeric).all(axis=1)
         invalid |= (numeric[["open", "high", "low", "close"]] <= 0).any(axis=1) | (numeric["volume"] < 0)
         invalid |= (numeric["high"] < numeric[["open", "low", "close"]].max(axis=1))
         invalid |= (numeric["low"] > numeric[["open", "close"]].min(axis=1))
