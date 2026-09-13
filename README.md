@@ -2,6 +2,29 @@
 
 [![CI](https://github.com/pavel7479/MLOps_pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/pavel7479/MLOps_pipeline/actions/workflows/ci.yml)
 
+## Блок 11 — данные по 6 криптовалютам
+
+Конфигурация расширена до BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT, BNBUSDT,
+DOGEUSDT на интервалах 1h и 1d. Одна команда создаёт и валидирует 12
+независимых Parquet-наборов, исключает незакрытые свечи и формирует manifest
+с SHA-256:
+
+~~~powershell
+.\.venv\Scripts\python.exe scripts\download_market_data.py --all
+~~~
+
+Один набор:
+
+~~~powershell
+.\.venv\Scripts\python.exe scripts\download_market_data.py --symbol ETHUSDT --interval 1d
+~~~
+
+Файлы находятся в data/raw и data/processed, manifest — в
+data/processed/market_data_manifest.json. Часовые данные предназначены для
+будущей торговой ML-модели, дневные — для будущих признаков дневного тренда.
+Подробности, проверка manifest и real-network smoke-test:
+[docs/multi_asset_data.md](docs/multi_asset_data.md).
+
 Учебный production-oriented ML-проект по прогнозированию движения криптовалютного рынка: от загрузки OHLCV и feature engineering до временной валидации, backtesting, MLflow Model Registry и локального FastAPI inference API с PostgreSQL.
 
 ## Требования и установка

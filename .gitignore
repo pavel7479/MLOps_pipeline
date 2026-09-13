@@ -12,6 +12,7 @@ __pycache__/
 .vscode/
 data/raw/*.parquet
 data/processed/*.parquet
+data/processed/market_data_manifest.json
 data/ml/*.parquet
 data/ml/*.json
 !data/raw/.gitkeep

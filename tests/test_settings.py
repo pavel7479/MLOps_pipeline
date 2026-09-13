@@ -33,6 +33,55 @@ def test_block_two_settings_are_loaded() -> None:
     assert settings.models.logistic_regression.random_state == 42
     assert settings.models.catboost.iterations == 300
     assert settings.evaluation.primary_metric == "macro_f1"
+    assert settings.market_data.configured_symbols == (
+        "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "DOGEUSDT"
+    )
+    assert settings.market_data.configured_intervals == ("1h", "1d")
+
+
+def test_multi_asset_config_can_omit_legacy_selection(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text("""market_data:
+  provider: binance
+  symbols: [ethusdt, solusdt]
+  intervals: [1h, 1d]
+  start_date: '2024-01-01'
+storage: {raw_dir: raw, processed_dir: processed, format: parquet}
+http: {timeout_seconds: 1, max_retries: 0, retry_delay_seconds: 0}
+logging: {level: INFO}
+""", encoding="utf-8")
+    settings = load_settings(config)
+    assert settings.market_data.symbol == "ETHUSDT"
+    assert settings.market_data.timeframe == "1h"
+    assert settings.inference.expected_symbol == "ETHUSDT"
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        ("symbols: []\n  intervals: [1h]", "symbol"),
+        ("symbols: ['']\n  intervals: [1h]", "blank values"),
+        ("symbols: [BTCUSDT, BTCUSDT]\n  intervals: [1h]", "duplicates"),
+        ("symbols: [BTCUSDT]\n  intervals: []", "timeframe"),
+    ],
+)
+def test_invalid_multi_asset_selection_is_rejected(
+    tmp_path: Path, source: str, message: str
+) -> None:
+    path = tmp_path / "invalid.yaml"
+    path.write_text(
+        f"""market_data:
+  provider: binance
+  {source}
+  start_date: '2024-01-01'
+storage: {{raw_dir: raw, processed_dir: processed, format: parquet}}
+http: {{timeout_seconds: 1, max_retries: 0, retry_delay_seconds: 0}}
+logging: {{level: INFO}}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigurationError, match=message):
+        load_settings(path)
 
 
 def test_split_ratios_must_sum_to_one(tmp_path: Path) -> None:

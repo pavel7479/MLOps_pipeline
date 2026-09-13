@@ -20,6 +20,18 @@ class MarketDataSettings:
     timeframe: str
     start_date: datetime
     end_date: datetime | None
+    symbols: tuple[str, ...] = ()
+    intervals: tuple[str, ...] = ()
+
+    @property
+    def configured_symbols(self) -> tuple[str, ...]:
+        """Return the multi-asset universe, falling back to the legacy symbol."""
+        return self.symbols or (self.symbol,)
+
+    @property
+    def configured_intervals(self) -> tuple[str, ...]:
+        """Return configured intervals, falling back to the legacy timeframe."""
+        return self.intervals or (self.timeframe,)
 
 
 @dataclass(frozen=True)
@@ -306,6 +318,21 @@ def _number_tuple(value: Any, name: str, cast: type = float) -> tuple[Any, ...]:
     return result
 
 
+def _unique_strings(value: Any, name: str, *, uppercase: bool = False) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ConfigurationError(f"{name} must be a non-empty list")
+    if any(not isinstance(item, str) or not item.strip() for item in value):
+        raise ConfigurationError(f"{name} must be a non-empty list without blank values")
+    result = tuple(str(item).strip() for item in value)
+    if uppercase:
+        result = tuple(item.upper() for item in result)
+    if not result:
+        raise ConfigurationError(f"{name} must be a non-empty list without blank values")
+    if len(set(result)) != len(result):
+        raise ConfigurationError(f"{name} must not contain duplicates")
+    return result
+
+
 def load_settings(path: str | Path = "config.yaml") -> AppSettings:
     """Load, validate, and resolve application settings."""
     config_path = Path(path).resolve()
@@ -325,6 +352,29 @@ def load_settings(path: str | Path = "config.yaml") -> AppSettings:
     end = _utc_datetime(end_value, "end_date") if end_value is not None else None
     if end is not None and end <= start:
         raise ConfigurationError("market_data.end_date must be after start_date")
+    if not market.get("symbols") and not market.get("symbol"):
+        raise ConfigurationError(
+            "Missing required setting: market_data.symbol or market_data.symbols"
+        )
+    if not market.get("intervals") and not market.get("timeframe"):
+        raise ConfigurationError(
+            "Missing required setting: market_data.timeframe or market_data.intervals"
+        )
+    symbols = _unique_strings(
+        market.get("symbols", [market.get("symbol")]),
+        "market_data.symbols",
+        uppercase=True,
+    )
+    intervals = _unique_strings(
+        market.get("intervals", [market.get("timeframe")]),
+        "market_data.intervals",
+    )
+    symbol = str(market.get("symbol", symbols[0])).strip().upper()
+    timeframe = str(market.get("timeframe", intervals[0])).strip()
+    if not symbol or symbol not in symbols:
+        raise ConfigurationError("market_data.symbol must be present in market_data.symbols")
+    if not timeframe or timeframe not in intervals:
+        raise ConfigurationError("market_data.timeframe must be present in market_data.intervals")
     fmt = str(_required(storage, "format", "storage")).lower()
     if fmt != "parquet":
         raise ConfigurationError("Only parquet storage is supported")
@@ -555,10 +605,10 @@ def load_settings(path: str | Path = "config.yaml") -> AppSettings:
         ).strip(),
         model_alias=str(inference_raw.get("model_alias", "champion")).strip(),
         expected_symbol=str(
-            inference_raw.get("expected_symbol", market.get("symbol", "BTCUSDT"))
+            inference_raw.get("expected_symbol", symbol)
         ).strip().upper(),
         expected_timeframe=str(
-            inference_raw.get("expected_timeframe", market.get("timeframe", "1h"))
+            inference_raw.get("expected_timeframe", timeframe)
         ).strip(),
     )
     if not all((
@@ -632,10 +682,12 @@ def load_settings(path: str | Path = "config.yaml") -> AppSettings:
     return AppSettings(
         market_data=MarketDataSettings(
             provider=str(_required(market, "provider", "market_data")).lower(),
-            symbol=str(_required(market, "symbol", "market_data")).upper(),
-            timeframe=str(_required(market, "timeframe", "market_data")),
+            symbol=symbol,
+            timeframe=timeframe,
             start_date=start,
             end_date=end,
+            symbols=symbols,
+            intervals=intervals,
         ),
         storage=StorageSettings(
             raw_dir=(base / _required(storage, "raw_dir", "storage")).resolve(),

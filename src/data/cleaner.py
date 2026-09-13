@@ -1,5 +1,6 @@
 """Deterministic and idempotent cleaning of OHLCV frames."""
 
+import numpy as np
 import pandas as pd
 
 from .models import MARKET_COLUMNS
@@ -17,6 +18,7 @@ class MarketDataCleaner:
         numeric_columns = MARKET_COLUMNS[1:]
         frame[numeric_columns] = frame[numeric_columns].apply(pd.to_numeric, errors="coerce")
         frame = frame.dropna(subset=MARKET_COLUMNS)
+        frame = frame.loc[np.isfinite(frame[numeric_columns]).all(axis=1)]
         valid = (frame[["open", "high", "low", "close"]] > 0).all(axis=1) & (frame["volume"] >= 0)
         valid &= frame["high"] >= frame[["open", "low", "close"]].max(axis=1)
         valid &= frame["low"] <= frame[["open", "close"]].min(axis=1)

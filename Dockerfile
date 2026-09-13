@@ -62,6 +62,8 @@ COPY --chown=appuser:appuser monitoring ./monitoring
 COPY --chown=appuser:appuser .env.ci.example compose.ci.yaml ./
 COPY --chown=appuser:appuser scripts/smoke_test_api.py \
     scripts/smoke_test_monitoring.py \
+    scripts/smoke_test_binance.py \
+    scripts/download_market_data.py \
     scripts/build_monitoring_reference.py \
     scripts/create_ci_bootstrap_artifacts.py \
     scripts/wait_for_compose.py \
